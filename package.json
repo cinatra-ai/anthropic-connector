@@ -42,6 +42,10 @@
     "apiVersion": "cinatra.ai/v1",
     "kind": "connector",
     "displayName": "Anthropic",
-    "dependencies": []
+    "dependencies": [],
+    "serverEntry": "./register",
+    "requestedHostPorts": [
+      "capabilities"
+    ]
   }
 }
