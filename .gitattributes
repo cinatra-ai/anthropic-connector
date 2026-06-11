@@ -1,0 +1,22 @@
+# Release source-archive hygiene — cinatra-ai/cinatra-engineering#56.
+# Trims CI/internal noise from `git archive` output (the auto "Source code
+# (zip/tar.gz)" assets on GitHub Releases). Patterns use the `/**` form:
+# bare `dir/ export-ignore` does not recurse reliably.
+# The npm tarball is governed separately by the package.json "files"
+# allowlist — .gitattributes has no effect on `npm pack`.
+
+# CI / pipeline config — highest-priority leak surface
+.github/** export-ignore
+
+# Tests & fixtures
+tests/** export-ignore
+**/__tests__/** export-ignore
+**/__fixtures__/** export-ignore
+**/__snapshots__/** export-ignore
+*.test.* export-ignore
+*.spec.* export-ignore
+vitest.config.* export-ignore
+
+# Git/dev plumbing (source archive only; npm strips these from tarballs)
+.gitattributes export-ignore
+.gitignore export-ignore
