@@ -10,11 +10,8 @@
 // connector's host deps slot (`registerAnthropicConnector(deps)`) by adapting
 // the per-concern host services published in the capability registry —
 // authorship of the transport registration moved connector-side; the host
-// names this package nowhere. Bind-if-absent skew guard: on a host that
-// still binds the deps statically at boot (pre-cutover), the host's eager
-// binding wins; the guard is swept once every host the connector can meet is
-// post-cutover. Every deps member resolves its host service LAZILY at call
-// time. Registration-only (no I/O) — safe under
+// names this package nowhere. Every deps member resolves its host service
+// LAZILY at call time. Registration-only (no I/O) — safe under
 // required-extension-activation's prod-boot arming, and probe-safe (the
 // probe's `resolveProviders` reads stay live, so a probe-bound deps slot
 // resolves identically to an activation-bound one).
@@ -39,7 +36,7 @@ import {
   type ClaudeModel,
 } from "./index";
 
-import { hasAnthropicDeps, registerAnthropicConnector, type AnthropicConnectorDeps } from "./deps";
+import { registerAnthropicConnector, type AnthropicConnectorDeps } from "./deps";
 
 const PACKAGE_NAME = "@cinatra-ai/anthropic-connector";
 
@@ -127,11 +124,12 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): AnthropicConnectorDeps {
 }
 
 export function register(ctx: ExtensionHostContext): void {
-  // Transport-DI inversion: bind the host deps slot UNLESS a pre-cutover host
-  // already bound it statically at boot (bind-if-absent skew guard).
-  if (!hasAnthropicDeps()) {
-    registerAnthropicConnector(buildHostBoundDeps(ctx));
-  }
+  // Transport-DI inversion: bind the host deps slot. Always-bind (the
+  // bind-if-absent skew guard was swept once every host this connector can
+  // meet is post-cutover): re-activation — incl. a hot-update digest swap —
+  // re-binds fresh lazy resolvers, so a stale deps object can never outlive
+  // its digest.
+  registerAnthropicConnector(buildHostBoundDeps(ctx));
 
   ctx.capabilities.registerProvider("llm-provider-surface", {
     packageName: PACKAGE_NAME,
