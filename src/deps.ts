@@ -84,15 +84,6 @@ export function registerAnthropicConnector(deps: AnthropicConnectorDeps): void {
   _holder[ANTHROPIC_DEPS_KEY] = deps;
 }
 
-/** True when the host runtime deps are already bound. Read by the
- * `register(ctx)` bind-if-absent skew guard (src/register.ts): on a host that
- * still binds deps statically at boot (pre transport-DI cutover) the host's
- * eager binding wins; on a cutover host nothing else binds, so register(ctx)
- * binds the lazy capability-resolving deps. Swept once every host the
- * connector can meet is post-cutover. */
-export function hasAnthropicDeps(): boolean {
-  return _holder[ANTHROPIC_DEPS_KEY] != null;
-}
 
 export function getAnthropicDeps(): AnthropicConnectorDeps {
   const deps = _holder[ANTHROPIC_DEPS_KEY];

@@ -1,5 +1,5 @@
 // `register(ctx)` shape — the Stage 3 transport-DI inversion: register binds
-// the host deps slot itself (bind-if-absent skew guard, lazy per-call host
+// the host deps slot itself (always-bind since the post-cutover sweep, lazy per-call host
 // service resolution, nango members over the connector-authored
 // `nango-system` surface) and keeps registering the llm-provider-surface.
 
@@ -17,7 +17,6 @@ vi.mock("../index", () => ({
 import { register } from "../register";
 import {
   getAnthropicDeps,
-  hasAnthropicDeps,
   registerAnthropicConnector,
   _resetAnthropicDepsForTests,
 } from "../deps";
@@ -54,19 +53,18 @@ describe("register(ctx) — transport-DI deps binding (Stage 3)", () => {
     });
     // The llm-provider-surface registration is unchanged.
     expect(registered.map((r) => r.capability)).toContain("llm-provider-surface");
-    expect(hasAnthropicDeps()).toBe(true);
     // No host-service resolution happened at registration (probe-safe).
     expect(resolveProviders).not.toHaveBeenCalled();
     expect(getAnthropicDeps().isAppDevelopmentMode()).toBe(true);
     expect(isDevelopment).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT replace a pre-bound deps slot (bind-if-absent skew guard)", () => {
+  it("REPLACES a pre-bound deps slot (always-bind — a hot-update digest swap re-binds fresh resolvers)", () => {
     const sentinel = vi.fn(() => false);
     registerAnthropicConnector({ isAppDevelopmentMode: sentinel } as never);
     activateWithServices({ "@cinatra-ai/host:runtime-mode": { isDevelopment: () => true } });
-    expect(getAnthropicDeps().isAppDevelopmentMode()).toBe(false);
-    expect(sentinel).toHaveBeenCalledTimes(1);
+    expect(getAnthropicDeps().isAppDevelopmentMode()).toBe(true);
+    expect(sentinel).not.toHaveBeenCalled();
   });
 
   it("nango members delegate to the connector-authored nango-system surface", () => {
