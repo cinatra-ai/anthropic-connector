@@ -4,7 +4,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "files": [
-    "src"
+    "src",
+    "!src/__tests__"
   ],
   "main": "src/index.ts",
   "types": "src/index.ts",
