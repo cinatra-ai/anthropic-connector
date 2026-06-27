@@ -3,6 +3,8 @@ import { NangoManagedApiCard } from "@cinatra-ai/sdk-ui/nango";
 import { getAnthropicDeps } from "./deps";
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
+import { Link } from "./components/ui/link";
+import { Select } from "./components/ui/select";
 import {
   isAnthropicConnectionReady,
   getConfiguredAnthropicConnection,
@@ -56,7 +58,7 @@ export async function AnthropicSettingsContent({ searchParams }: SettingsPagePro
             Connect Nango to manage the Anthropic API credential. Configure it on the connections settings page.
           </p>
           <Button asChild variant="outline" className="mt-3">
-            <a href="/configuration/environment?tab=connections">Open connection settings</a>
+            <Link href="/configuration/environment?tab=connections">Open connection settings</Link>
           </Button>
         </div>
       ) : null}
@@ -94,15 +96,11 @@ export async function AnthropicSettingsContent({ searchParams }: SettingsPagePro
                 Select which Claude model is used by default for Anthropic-powered workflows.
               </p>
             </div>
-            <select
-              name="defaultModel"
-              defaultValue={currentDefaultModel}
-              className="rounded-control border border-line bg-surface-strong px-4 py-3"
-            >
+            <Select name="defaultModel" defaultValue={currentDefaultModel}>
               {CLAUDE_MODELS.map((model) => (
                 <option key={model} value={model}>{model}</option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -112,14 +110,10 @@ export async function AnthropicSettingsContent({ searchParams }: SettingsPagePro
                 How Claude accesses the Cinatra MCP server. Use function-tools (default) for broad compatibility. Use native for the Anthropic MCP beta path.
               </p>
             </div>
-            <select
-              name="mcpMode"
-              defaultValue={currentMcpMode}
-              className="rounded-control border border-line bg-surface-strong px-4 py-3"
-            >
+            <Select name="mcpMode" defaultValue={currentMcpMode}>
               <option value="native">native</option>
               <option value="function-tools">function-tools</option>
-            </select>
+            </Select>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -129,14 +123,13 @@ export async function AnthropicSettingsContent({ searchParams }: SettingsPagePro
                 When enabled, the system prompt is sent with a cache control marker so Anthropic can cache it between calls — reducing cost and latency for repeated requests.
               </p>
             </div>
-            <select
+            <Select
               name="promptCachingEnabled"
               defaultValue={currentPromptCachingEnabled ? "on" : "off"}
-              className="rounded-control border border-line bg-surface-strong px-4 py-3"
             >
               <option value="on">Enabled</option>
               <option value="off">Disabled</option>
-            </select>
+            </Select>
           </div>
 
           <div className="flex justify-end">
