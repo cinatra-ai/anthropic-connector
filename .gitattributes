@@ -1,4 +1,4 @@
-# Release source-archive hygiene — cinatra-ai/cinatra-engineering#56.
+# Release source-archive hygiene (per the org release-artifact standard).
 # Trims CI/internal noise from `git archive` output (the auto "Source code
 # (zip/tar.gz)" assets on GitHub Releases). Patterns use the `/**` form:
 # bare `dir/ export-ignore` does not recurse reliably.
