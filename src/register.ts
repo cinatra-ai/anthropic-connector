@@ -32,11 +32,16 @@ import {
   saveDefaultClaudeModel,
   saveAnthropicAPISettings,
   clearAnthropicAPISettings,
+  getAnthropicAPIStatus,
   CLAUDE_MODELS,
   type ClaudeModel,
 } from "./index";
 
-import { registerAnthropicConnector, type AnthropicConnectorDeps } from "./deps";
+import {
+  registerAnthropicConnector,
+  getAnthropicDeps,
+  type AnthropicConnectorDeps,
+} from "./deps";
 
 const PACKAGE_NAME = "@cinatra-ai/anthropic-connector";
 
@@ -52,6 +57,15 @@ type HostAnthropicConnectionShape = {
   readRowFromDatabase: AnthropicConnectorDeps["readAnthropicConnectionFromDatabase"];
 };
 type HostRuntimeModeShape = { isDevelopment(): boolean };
+
+/** The host-published action-guard service (value, NOT the SDK
+ *  `requireExtensionAction` import — a runtime serverEntry graph rejects SDK
+ *  value imports). `require(packageId, mode)` resolves the actor from the
+ *  request session and enforces the per-install extension access policy,
+ *  failing closed (throw/redirect) on denial. Mirrors openai-connector. */
+type HostActionGuard = {
+  require: (packageId: string, mode: "read" | "manage") => Promise<void>;
+};
 
 /** Lazy per-concern host-service resolution (fail-loud on a missing service). */
 function hostService<T>(ctx: ExtensionHostContext, capability: string): T {
@@ -148,6 +162,94 @@ export function register(ctx: ExtensionHostContext): void {
       saveAPISettings: (input: { apiKey: string }) => saveAnthropicAPISettings(input),
       clearAPISettings: () => clearAnthropicAPISettings(),
       models: CLAUDE_MODELS,
+    },
+  });
+
+  // ---- schema-config named actions (cinatra#782) ----
+  //
+  // The declarative setup surface (cinatra.configSchema) renders WITHOUT
+  // shipping React. Its probe + named-action fields reference these
+  // host-registered actions BY ID; the host dispatches them through the single
+  // endpoint `/api/extensions/{installId}/actions/{actionId}`, which resolves +
+  // authorizes the actor at the "use" tier BEFORE calling the handler. Because
+  // saving/clearing a credential is a MANAGE-tier mutation (the prior
+  // saveAnthropicSettingsAction gated "manage"), the WRITE handlers re-assert
+  // the manage gate via the host action-guard service — the "use"-tier endpoint
+  // check alone would be a regression. Requires the "ui" host port (declared in
+  // cinatra.requestedHostPorts).
+
+  // Resolve the host's action-guard service LAZILY at action-call time (the same
+  // value the SDK `requireExtensionAction` slot binds), so activation order
+  // never matters and a missing guard FAILS CLOSED. Imported as a VALUE through
+  // the capability registry — NEVER as an SDK value import (a runtime
+  // serverEntry graph rejects those). Mirrors openai-connector.
+  const requireManage = async (): Promise<void> => {
+    const provider = ctx.capabilities.resolveProviders(
+      "@cinatra-ai/host:extension-action-guard",
+    )[0];
+    const guard = provider?.impl as HostActionGuard | undefined;
+    if (!guard || typeof guard.require !== "function") {
+      throw new Error(
+        `${PACKAGE_NAME}: host action-guard service is not registered — refusing the ungated action.`,
+      );
+    }
+    await guard.require(PACKAGE_NAME, "manage");
+  };
+
+  // READ/PROBE: whether the connection (Nango) service is configured for API-key
+  // storage — drives the `advisory` field's copy. Boolean data only.
+  ctx.ui.registerAction({
+    id: "connectionServiceReady",
+    handler: async (): Promise<{ ready: boolean }> => ({
+      ready: getAnthropicDeps().nango.isConfigured(),
+    }),
+  });
+
+  // PROBE: connection status. THROWS when not connected so the status-probe pill
+  // renders "error" (any 2xx renders OK); a connected status returns its detail.
+  ctx.ui.registerAction({
+    id: "connectionStatus",
+    handler: async (): Promise<{ detail: string }> => {
+      const status = getAnthropicAPIStatus();
+      if (status.status !== "connected") {
+        throw new Error(status.detail);
+      }
+      return { detail: status.detail };
+    },
+  });
+
+  // WRITE (manage-gated): persist the API key (synced to Nango) + the default
+  // Claude model. The schema-config form posts the flat text/secret/select
+  // inputs as JSON. A blank apiKey is treated as ABSENT (no overwrite) — the
+  // form sends an empty secret input when untouched, and saveAnthropicAPISettings
+  // falls back to the currently-stored key. An unknown model value is ignored
+  // (mirrors the prior action's CLAUDE_MODELS.includes guard).
+  ctx.ui.registerAction({
+    id: "saveConnection",
+    handler: async (input: unknown): Promise<{ banner: string }> => {
+      await requireManage();
+      const fields =
+        input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+      const rawApiKey = typeof fields.apiKey === "string" ? fields.apiKey.trim() : "";
+      const rawModel = typeof fields.defaultModel === "string" ? fields.defaultModel : "";
+      if (rawApiKey) {
+        await saveAnthropicAPISettings({ apiKey: rawApiKey });
+      }
+      if ((CLAUDE_MODELS as readonly string[]).includes(rawModel)) {
+        saveDefaultClaudeModel(rawModel as ClaudeModel);
+      }
+      return { banner: "saved" };
+    },
+  });
+
+  // WRITE (manage-gated): clear the stored connection (scrubs the Nango
+  // credential + cinatra-side pointer rows).
+  ctx.ui.registerAction({
+    id: "clearConnection",
+    handler: async (): Promise<{ banner: string }> => {
+      await requireManage();
+      await clearAnthropicAPISettings();
+      return { banner: "cleared" };
     },
   });
 }

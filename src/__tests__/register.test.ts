@@ -11,6 +11,7 @@ vi.mock("../index", () => ({
   saveDefaultClaudeModel: vi.fn(),
   saveAnthropicAPISettings: vi.fn(async () => ({})),
   clearAnthropicAPISettings: vi.fn(async () => ({})),
+  getAnthropicAPIStatus: vi.fn(() => ({ status: "not_connected", detail: "" })),
   CLAUDE_MODELS: ["claude-x"],
 }));
 
@@ -28,6 +29,11 @@ function activateWithServices(impls: Record<string, unknown>) {
       ? [{ packageName: "@cinatra-ai/host", impl: impls[capability] }]
       : [],
   );
+  // register(ctx) now ALSO registers the schema-config named actions via
+  // `ctx.ui` (the "ui" host port) — provide a faithful ui port so this
+  // deps-binding test exercises a complete ctx. (Named-action behavior is
+  // asserted in register-ui-actions.test.ts.)
+  const uiActions: Array<{ id: string; handler: (input: unknown) => Promise<unknown> }> = [];
   const ctx = {
     capabilities: {
       registerProvider: (capability: string, provider: unknown) => {
@@ -35,9 +41,16 @@ function activateWithServices(impls: Record<string, unknown>) {
       },
       resolveProviders,
     },
+    ui: {
+      registerSetupSurface: () => {},
+      registerSettingsSurface: () => {},
+      registerAction: (action: { id: string; handler: (input: unknown) => Promise<unknown> }) => {
+        uiActions.push(action);
+      },
+    },
   } as never;
   register(ctx);
-  return { registered, resolveProviders };
+  return { registered, resolveProviders, uiActions };
 }
 
 beforeEach(() => {
