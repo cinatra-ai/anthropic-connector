@@ -75,11 +75,15 @@ export async function AnthropicSettingsContent({ searchParams }: SettingsPagePro
         </div>
       ) : null}
 
+      {/* The connection-status badge is HOST-injected on the connector
+          setup-page dispatch route — the same badge the /connectors card
+          shows — so the extension no longer renders its own status pill here
+          (it would duplicate the host badge). `isConnected` still drives the
+          card's connect/reconnect affordance; only the status pill is dropped. */}
       <NangoManagedApiCard
         connectorKey="claude"
         title="Anthropic API"
         description="Connect Anthropic's Claude API for LLM-powered workflows."
-        badge={isConnected ? "Connected" : "Setup required"}
         isConnected={isConnected}
         usesConnectUI={true}
         reconnectConnectionId={deps.nango.getPrimarySavedConnection("claude")?.connectionId}
