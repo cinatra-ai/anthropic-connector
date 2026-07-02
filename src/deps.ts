@@ -36,11 +36,19 @@ export interface AnthropicNangoCapability {
   getPrimarySavedConnection(
     connectorKey: "claude",
   ): { providerConfigKey: string; connectionId: string; displayName?: string } | null;
-  /** Read back the stored credentials. */
-  getCredentials(providerConfigKey: string, connectionId: string): Promise<unknown>;
+  /** Read back the stored credentials. `forceRefresh` bypasses Nango's cache so
+   *  a write-then-read-back verification reads the just-written credential. */
+  getCredentials(
+    providerConfigKey: string,
+    connectionId: string,
+    opts?: { forceRefresh?: boolean },
+  ): Promise<unknown>;
   /** Ensure the provider-config (integration) row exists. */
   ensureIntegration(input: { provider: string; providerConfigKey: string; displayName?: string }): Promise<unknown>;
-  /** Upsert a connection record by (providerConfigKey, connectionId). */
+  /** Upsert a connection record by (providerConfigKey, connectionId). anthropic
+   *  OMITS `connectorKey` so the cinatra-side pointer is NOT auto-saved before
+   *  the readback verification (the pointer is saved via `saveConnectionRecord`
+   *  only after the readback compare passes). */
   importConnection(input: {
     connectorKey?: string;
     providerConfigKey: string;
@@ -48,6 +56,21 @@ export interface AnthropicNangoCapability {
     credentials: { type: string; apiKey: string };
     metadata?: Record<string, unknown>;
   }): Promise<unknown>;
+  /** Persist the cinatra-side pointer row AFTER a verified readback.
+   *  `{ multiple: false }` enforces a single workspace-wide credential. The
+   *  pointer is the "verified + committed" signal that
+   *  `getConfiguredAnthropicConnection` gates its Nango read on, so it must
+   *  never be written before the readback compare passes. */
+  saveConnectionRecord(
+    connectorKey: "claude",
+    record: {
+      connectionId: string;
+      providerConfigKey: string;
+      displayName?: string;
+      metadata?: Record<string, unknown>;
+    },
+    opts?: { multiple?: boolean },
+  ): Promise<unknown>;
   /** Delete the Nango connection (scrubs stored credentials). */
   deleteConnection(providerConfigKey: string, connectionId: string): Promise<unknown>;
   /** Clear the cinatra-side pointer rows for this connector. */
@@ -62,6 +85,12 @@ export interface AnthropicConnectorDeps {
   // connector_config (raw connectorId key)
   readConnectorConfigFromDatabase: <T>(connectorId: string, fallback: T) => T;
   writeConnectorConfigToDatabase: (connectorId: string, value: unknown) => void;
+  // Physically delete a connector-config row (backed by the host connector-config
+  // service's `delete` member). Used to purge the legacy `anthropic_connection`
+  // DB-fallback credential on clear/save so a cleared connection cannot keep
+  // resolving an old plaintext key. PHYSICAL remove, never a blank — a dead
+  // credential must be removed.
+  deleteConnectorConfigFromDatabase: (connectorId: string) => void;
   // the anthropic connection row in the metadata store (DB fallback credential)
   readAnthropicConnectionFromDatabase: () => AnthropicConnectionRow;
   // runtime mode flag
