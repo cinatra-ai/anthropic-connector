@@ -48,6 +48,7 @@
   "cinatra": {
     "apiVersion": "cinatra.ai/v1",
     "kind": "connector",
+    "consumes": [],
     "vendor": {
       "key": "cinatra-ai",
       "name": "Cinatra"
