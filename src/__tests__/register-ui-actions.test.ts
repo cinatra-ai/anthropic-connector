@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   saveAnthropicAPISettings: vi.fn(async () => ({})),
   clearAnthropicAPISettings: vi.fn(async () => ({})),
   saveDefaultClaudeModel: vi.fn(),
+  getPersistedDefaultClaudeModel: vi.fn<() => string | undefined>(() => undefined),
   getAnthropicAPIStatus: vi.fn(() => ({ status: "not_connected", detail: "Add a key." })),
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../index", () => ({
   getConfiguredAnthropicConnection: vi.fn(async () => null),
   getDefaultClaudeModel: vi.fn(() => "claude-sonnet-4-6"),
   saveDefaultClaudeModel: mocks.saveDefaultClaudeModel,
+  getPersistedDefaultClaudeModel: mocks.getPersistedDefaultClaudeModel,
   saveAnthropicAPISettings: mocks.saveAnthropicAPISettings,
   clearAnthropicAPISettings: mocks.clearAnthropicAPISettings,
   getAnthropicAPIStatus: mocks.getAnthropicAPIStatus,
@@ -34,8 +36,9 @@ vi.mock("../index", () => ({
   ],
 }));
 
-import { register } from "../register";
+import { register, DECLARED_DEFAULT_MODEL } from "../register";
 import { _resetAnthropicDepsForTests } from "../deps";
+import pkg from "../../package.json" with { type: "json" };
 
 type RegisteredProvider = { packageName: string; impl: unknown };
 type UiAction = { id: string; handler: (input: unknown) => Promise<unknown> };
@@ -140,6 +143,53 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     expect(mocks.saveAnthropicAPISettings).toHaveBeenCalledWith({ apiKey: "sk-ant-xyz" });
     expect(mocks.saveDefaultClaudeModel).toHaveBeenCalledWith("claude-opus-4");
     expect(r).toEqual({ banner: "saved" });
+  });
+
+  it("saveConnection KEEPS the persisted model when the submission is the DECLARED DEFAULT over a different stored choice (no clobber)", async () => {
+    // The un-prepopulated schema-config form submits the declared default even
+    // when the admin previously chose a different model — must not overwrite.
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue("claude-opus-4-7");
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+    });
+    register(ctx);
+    await actionById(uiActions, "saveConnection").handler({
+      apiKey: "sk-ant-xyz",
+      defaultModel: DECLARED_DEFAULT_MODEL,
+    });
+    expect(mocks.saveAnthropicAPISettings).toHaveBeenCalledWith({ apiKey: "sk-ant-xyz" });
+    expect(mocks.saveDefaultClaudeModel).not.toHaveBeenCalled();
+  });
+
+  it("saveConnection APPLIES the declared default on a first-time save (no stored model)", async () => {
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue(undefined);
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+    });
+    register(ctx);
+    await actionById(uiActions, "saveConnection").handler({
+      apiKey: "sk-ant-xyz",
+      defaultModel: DECLARED_DEFAULT_MODEL,
+    });
+    expect(mocks.saveDefaultClaudeModel).toHaveBeenCalledWith(DECLARED_DEFAULT_MODEL);
+  });
+
+  it("saveConnection APPLIES a non-default model even when a different one is stored (explicit choice)", async () => {
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue("claude-opus-4-7");
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+    });
+    register(ctx);
+    await actionById(uiActions, "saveConnection").handler({ defaultModel: "claude-opus-4" });
+    expect(mocks.saveDefaultClaudeModel).toHaveBeenCalledWith("claude-opus-4");
+  });
+
+  it("DECLARED_DEFAULT_MODEL mirrors the manifest's declared defaultValue", () => {
+    const fields = (
+      pkg as { cinatra: { configSchema: { fields: Array<Record<string, unknown>> } } }
+    ).cinatra.configSchema.fields;
+    const select = fields.find((f) => f.kind === "select" && f.key === "defaultModel");
+    expect(select?.defaultValue).toBe(DECLARED_DEFAULT_MODEL);
   });
 
   it("saveConnection treats a blank apiKey as ABSENT (no overwrite) and ignores an unknown model", async () => {

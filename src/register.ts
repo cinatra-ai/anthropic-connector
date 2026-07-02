@@ -30,6 +30,7 @@ import {
   getConfiguredAnthropicConnection,
   getDefaultClaudeModel,
   saveDefaultClaudeModel,
+  getPersistedDefaultClaudeModel,
   saveAnthropicAPISettings,
   clearAnthropicAPISettings,
   getAnthropicAPIStatus,
@@ -45,6 +46,18 @@ import {
 
 const PACKAGE_NAME = "@cinatra-ai/anthropic-connector";
 
+// The schema-declared default for the `defaultModel` select (mirror
+// package.json cinatra.configSchema[defaultModel].defaultValue —
+// config-schema.test.ts pins them equal). Because the host does not yet thread
+// `initialValues` into schema-config forms, an un-prepopulated form renders +
+// submits this declared default. Treating that as an explicit choice would
+// CLOBBER an admin's chosen model on any unrelated api-key re-save, so a
+// submitted value equal to the declared default is kept-persisted when the
+// stored model differs (mirrors openai-connector's DECLARED_DEFAULTS no-loss
+// handling). Exported so the config-schema test can pin it equal to the
+// manifest's declared defaultValue.
+export const DECLARED_DEFAULT_MODEL = "claude-sonnet-4-6";
+
 // Local STRUCTURAL shapes of the per-concern host services this connector
 // adapts into its deps slot (ids inlined; the graph stays SDK-type-only; the
 // host-side contract types live in @cinatra-ai/sdk-extensions — these stay
@@ -52,6 +65,9 @@ const PACKAGE_NAME = "@cinatra-ai/anthropic-connector";
 type HostConnectorConfigShape = {
   read<T>(connectorId: string, fallback: T): T;
   write(connectorId: string, value: unknown): void;
+  // PHYSICAL row delete — the host connector-config service publishes this
+  // (used to purge the legacy `anthropic_connection` DB-fallback credential).
+  delete(connectorId: string): void;
 };
 type HostAnthropicConnectionShape = {
   readRowFromDatabase: AnthropicConnectorDeps["readAnthropicConnectionFromDatabase"];
@@ -106,6 +122,7 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): AnthropicConnectorDeps {
     readConnectorConfigFromDatabase: <T,>(connectorId: string, fallback: T): T =>
       config().read(connectorId, fallback),
     writeConnectorConfigToDatabase: (connectorId, value) => config().write(connectorId, value),
+    deleteConnectorConfigFromDatabase: (connectorId) => config().delete(connectorId),
     readAnthropicConnectionFromDatabase: () => connection().readRowFromDatabase(),
     isAppDevelopmentMode: () => runtimeMode().isDevelopment(),
     // Nango connection-storage members delegate to the connector-authored
@@ -118,8 +135,10 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): AnthropicConnectorDeps {
       getStatus: () => nango().getNangoStatus(),
       getFrontendConfig: () => nango().getNangoFrontendConfig(),
       getPrimarySavedConnection: (connectorKey) => nango().getPrimarySavedNangoConnection(connectorKey),
-      getCredentials: (providerConfigKey, connectionId) =>
-        nango().getNangoCredentials(providerConfigKey, connectionId),
+      getCredentials: (providerConfigKey, connectionId, opts) =>
+        nango().getNangoCredentials(providerConfigKey, connectionId, opts),
+      saveConnectionRecord: (connectorKey, record, opts) =>
+        nango().saveNangoConnectionRecord(connectorKey, record, opts),
       ensureIntegration: (input) =>
         nango().ensureNangoIntegration(input as Parameters<NangoSystemSurface["ensureNangoIntegration"]>[0]),
       importConnection: (input) =>
@@ -236,7 +255,19 @@ export function register(ctx: ExtensionHostContext): void {
         await saveAnthropicAPISettings({ apiKey: rawApiKey });
       }
       if ((CLAUDE_MODELS as readonly string[]).includes(rawModel)) {
-        saveDefaultClaudeModel(rawModel as ClaudeModel);
+        // Keep-persisted no-loss: skip the write when the submission is
+        // indistinguishable from an un-prepopulated form re-submitting the
+        // declared default over a DIFFERENT stored choice. A value that differs
+        // from the declared default (or a first-time save with no stored model)
+        // is the admin's explicit intent → apply it.
+        const persistedModel = getPersistedDefaultClaudeModel();
+        const isUnprepopulatedDefault =
+          rawModel === DECLARED_DEFAULT_MODEL &&
+          persistedModel !== undefined &&
+          persistedModel !== rawModel;
+        if (!isUnprepopulatedDefault) {
+          saveDefaultClaudeModel(rawModel as ClaudeModel);
+        }
       }
       return { banner: "saved" };
     },

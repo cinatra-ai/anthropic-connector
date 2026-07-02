@@ -9,6 +9,7 @@ vi.mock("../index", () => ({
   getConfiguredAnthropicConnection: vi.fn(async () => null),
   getDefaultClaudeModel: vi.fn(() => "claude-x"),
   saveDefaultClaudeModel: vi.fn(),
+  getPersistedDefaultClaudeModel: vi.fn(() => undefined),
   saveAnthropicAPISettings: vi.fn(async () => ({})),
   clearAnthropicAPISettings: vi.fn(async () => ({})),
   getAnthropicAPIStatus: vi.fn(() => ({ status: "not_connected", detail: "" })),
