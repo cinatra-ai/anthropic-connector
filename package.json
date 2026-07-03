@@ -61,6 +61,7 @@
       "ui"
     ],
     "sdkAbiRange": "^2",
+    "providerConfigKey": "cinatra-anthropic",
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "Anthropic",
