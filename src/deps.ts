@@ -81,6 +81,37 @@ export interface AnthropicNangoCapability {
   connectionIds: { claude: string };
 }
 
+/**
+ * The Skills-setting host capability (cinatra-ai/cinatra#1104 — S3a of the
+ * connector-setup-tabs epic, cinatra#1101). That migration moves the
+ * `anthropic-skill-sync-enabled` read/write out of core (today it lives
+ * entirely in `_default-llm-select.tsx` / `campaigns/actions.ts`) into a host
+ * capability this connector calls, mirroring the existing
+ * `readConnectorConfigFromDatabase`/`writeConnectorConfigToDatabase` pattern —
+ * `read()` returns the persisted opt-in (default off); `write()` persists it
+ * (and, on the host side, should preserve the existing "pre-sync at
+ * admin-save time" trigger `campaigns/actions.ts` performs today).
+ *
+ * PROVISIONAL + THIS CONNECTOR'S OWN INTERNAL ADAPTER SHAPE (codex convergence,
+ * round 1): #1104 is in progress on a sibling lane, so the REAL host-published
+ * capability's id/method-names/signatures may differ from this shape once it
+ * lands. Treat this interface as owned by THIS connector, not as a preview of
+ * #1104's actual contract — when #1104 lands, adapt its real provider into
+ * this exact `{read, write}` shape INSIDE `tryAnthropicSkillConfig` (the single
+ * resolution site in register.ts), so deps.ts/index.ts and every test built
+ * against this interface need no further changes. Optional + nullable so a
+ * host that predates #1104 simply resolves `null` here; every Skills-tab
+ * caller (see index.ts's `getAnthropicSkillSyncEnabled` /
+ * `saveAnthropicSkillSyncEnabled` / `getAnthropicSkillSyncCapabilityReady`)
+ * degrades gracefully on `null` instead of throwing.
+ */
+export interface HostAnthropicSkillConfigShape {
+  /** The persisted opt-in (mirrors readAnthropicSkillSyncEnabledFromDatabase). */
+  read(): boolean;
+  /** Persist the opt-in (mirrors writeAnthropicSkillSyncEnabledToDatabase). */
+  write(enabled: boolean): void | Promise<void>;
+}
+
 export interface AnthropicConnectorDeps {
   // connector_config (raw connectorId key)
   readConnectorConfigFromDatabase: <T>(connectorId: string, fallback: T) => T;
@@ -97,6 +128,12 @@ export interface AnthropicConnectorDeps {
   isAppDevelopmentMode: () => boolean;
   /** Nango connection-storage surface (host-bound from the nango-connector extension). */
   nango: AnthropicNangoCapability;
+  /**
+   * PROVISIONAL (cinatra-ai/cinatra#1104 — see HostAnthropicSkillConfigShape).
+   * `null` when the host predates the migration; optional so pre-existing
+   * deps fixtures (tests, older host binders) compile unchanged.
+   */
+  anthropicSkillConfig?: HostAnthropicSkillConfigShape | null;
 }
 
 const ANTHROPIC_DEPS_KEY = Symbol.for("@cinatra-ai/anthropic-connector:host-deps/v1");

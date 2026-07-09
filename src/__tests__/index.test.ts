@@ -14,11 +14,15 @@ import {
   saveAnthropicAPISettings,
   clearAnthropicAPISettings,
   getAnthropicAPIStatus,
+  getAnthropicSkillSyncCapabilityReady,
+  getAnthropicSkillSyncEnabled,
+  saveAnthropicSkillSyncEnabled,
 } from "../index";
 import {
   registerAnthropicConnector,
   _resetAnthropicDepsForTests,
   type AnthropicConnectorDeps,
+  type HostAnthropicSkillConfigShape,
 } from "../deps";
 
 const PCK = "cinatra-claude";
@@ -33,6 +37,10 @@ function makeDeps(opts: {
   dbRow?: { apiKey?: string } | null; // legacy anthropic_connection fallback row
   settings?: Record<string, unknown>; // the connector_config "anthropic" row
   deleteConnectionImpl?: () => Promise<unknown>;
+  // cinatra-ai/cinatra#1104 (S3a, in progress). Omit for a default WORKING fake
+  // (persisted false); pass `null` to simulate a host that predates #1104 (the
+  // fail-graceful path every Skills-tab function must degrade through).
+  skillConfig?: HostAnthropicSkillConfigShape | null;
 }) {
   const store: Record<string, unknown> = {
     anthropic: opts.settings ?? {},
@@ -63,6 +71,11 @@ function makeDeps(opts: {
     connectionIds: { claude: CID },
   };
 
+  // Default WORKING fake (persisted false) unless the test passes its own
+  // fake or explicit `null` (pre-#1104 host simulation).
+  const skillConfig: HostAnthropicSkillConfigShape | null =
+    opts.skillConfig !== undefined ? opts.skillConfig : { read: vi.fn(() => false), write: vi.fn() };
+
   const deps = {
     readConnectorConfigFromDatabase: <T>(connectorId: string, fallback: T): T =>
       (connectorId in store ? (store[connectorId] as T) : fallback) ?? fallback,
@@ -77,10 +90,11 @@ function makeDeps(opts: {
     ),
     isAppDevelopmentMode: vi.fn(() => false),
     nango,
+    anthropicSkillConfig: skillConfig,
   } as unknown as AnthropicConnectorDeps;
 
   registerAnthropicConnector(deps);
-  return { deps, nango, store };
+  return { deps, nango, store, skillConfig };
 }
 
 beforeEach(() => {
@@ -272,5 +286,57 @@ describe("getAnthropicAPIStatus — consults the legacy fallback (finding 2)", (
   it("not_connected when neither a pointer nor a legacy row exists", () => {
     makeDeps({ configured: true, savedConnection: null, dbRow: null });
     expect(getAnthropicAPIStatus().status).toBe("not_connected");
+  });
+});
+
+describe("Skills tab — anthropicSkillConfig capability (cinatra-ai/cinatra#44, pending #1104)", () => {
+  it("getAnthropicSkillSyncCapabilityReady is true when the host exposes the capability, false when it predates #1104", () => {
+    makeDeps({ configured: true, skillConfig: { read: vi.fn(() => false), write: vi.fn() } });
+    expect(getAnthropicSkillSyncCapabilityReady()).toBe(true);
+
+    makeDeps({ configured: true, skillConfig: null });
+    expect(getAnthropicSkillSyncCapabilityReady()).toBe(false);
+  });
+
+  it("getAnthropicSkillSyncEnabled reads through the capability, defaulting to the SAFE off value when absent", () => {
+    makeDeps({ configured: true, skillConfig: { read: vi.fn(() => true), write: vi.fn() } });
+    expect(getAnthropicSkillSyncEnabled()).toBe(true);
+
+    makeDeps({ configured: true, skillConfig: null });
+    expect(getAnthropicSkillSyncEnabled()).toBe(false);
+  });
+
+  it('saveAnthropicSkillSyncEnabled returns {ok:false,reason:"unavailable"} and writes NOTHING when the host predates #1104 (fail-graceful)', async () => {
+    makeDeps({ configured: true, skillConfig: null });
+    await expect(saveAnthropicSkillSyncEnabled(true)).resolves.toEqual({ ok: false, reason: "unavailable" });
+  });
+
+  it("saveAnthropicSkillSyncEnabled ALWAYS applies an explicit true (unambiguous — the declared default is false)", async () => {
+    const write = vi.fn();
+    makeDeps({ configured: true, skillConfig: { read: vi.fn(() => false), write } });
+    await expect(saveAnthropicSkillSyncEnabled(true)).resolves.toEqual({ ok: true });
+    expect(write).toHaveBeenCalledWith(true);
+  });
+
+  it("saveAnthropicSkillSyncEnabled applies an explicit false when the persisted value is ALREADY false (no-op write, but not skipped)", async () => {
+    const write = vi.fn();
+    makeDeps({ configured: true, skillConfig: { read: vi.fn(() => false), write } });
+    await expect(saveAnthropicSkillSyncEnabled(false)).resolves.toEqual({ ok: true });
+    expect(write).toHaveBeenCalledWith(false);
+  });
+
+  it("saveAnthropicSkillSyncEnabled ALWAYS applies an explicit false, even over a persisted true (codex round-1: this must NOT mirror defaultModel's no-loss guard, or the toggle becomes enable-only and can never be turned back off)", async () => {
+    const write = vi.fn();
+    makeDeps({ configured: true, skillConfig: { read: vi.fn(() => true), write } });
+    await expect(saveAnthropicSkillSyncEnabled(false)).resolves.toEqual({ ok: true });
+    expect(write).toHaveBeenCalledWith(false);
+  });
+
+  it("saveAnthropicSkillSyncEnabled NEVER reads the persisted value before writing (no no-loss comparison — read() and write() are independent)", async () => {
+    const read = vi.fn(() => true);
+    const write = vi.fn();
+    makeDeps({ configured: true, skillConfig: { read, write } });
+    await saveAnthropicSkillSyncEnabled(false);
+    expect(read).not.toHaveBeenCalled();
   });
 });
