@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   saveDefaultClaudeModel: vi.fn(),
   getPersistedDefaultClaudeModel: vi.fn<() => string | undefined>(() => undefined),
   getAnthropicAPIStatus: vi.fn(() => ({ status: "not_connected", detail: "Add a key." })),
+  getAnthropicSkillSyncCapabilityReady: vi.fn(() => true),
+  saveAnthropicSkillSyncEnabled: vi.fn(async () => ({ ok: true }) as { ok: true } | { ok: false; reason: "unavailable" }),
 }));
 
 vi.mock("../index", () => ({
@@ -28,6 +30,8 @@ vi.mock("../index", () => ({
   saveAnthropicAPISettings: mocks.saveAnthropicAPISettings,
   clearAnthropicAPISettings: mocks.clearAnthropicAPISettings,
   getAnthropicAPIStatus: mocks.getAnthropicAPIStatus,
+  getAnthropicSkillSyncCapabilityReady: mocks.getAnthropicSkillSyncCapabilityReady,
+  saveAnthropicSkillSyncEnabled: mocks.saveAnthropicSkillSyncEnabled,
   CLAUDE_MODELS: [
     "claude-opus-4-7",
     "claude-opus-4",
@@ -92,7 +96,15 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     const { ctx, uiActions } = makeCtx({});
     register(ctx);
     expect(uiActions.map((a) => a.id).sort()).toEqual(
-      ["clearConnection", "connectionServiceReady", "connectionStatus", "saveConnection"].sort(),
+      [
+        "clearConnection",
+        "connectionServiceReady",
+        "connectionStatus",
+        "saveConnection",
+        "skillsCapabilityReady",
+        "saveSkills",
+        "helpContentReady",
+      ].sort(),
     );
   });
 
@@ -218,5 +230,67 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     expect(require).toHaveBeenCalledWith("@cinatra-ai/anthropic-connector", "manage");
     expect(mocks.clearAnthropicAPISettings).toHaveBeenCalledOnce();
     expect(r).toEqual({ banner: "cleared" });
+  });
+
+  // ---- Skills tab (cinatra-ai/cinatra#44) ----
+
+  it("skillsCapabilityReady reports the (mocked) index.ts capability-presence check as data", async () => {
+    mocks.getAnthropicSkillSyncCapabilityReady.mockReturnValueOnce(true);
+    const { ctx, uiActions } = makeCtx({});
+    register(ctx);
+    await expect(actionById(uiActions, "skillsCapabilityReady").handler({})).resolves.toEqual({ ready: true });
+
+    mocks.getAnthropicSkillSyncCapabilityReady.mockReturnValueOnce(false);
+    const { ctx: ctx2, uiActions: uiActions2 } = makeCtx({});
+    register(ctx2);
+    await expect(actionById(uiActions2, "skillsCapabilityReady").handler({})).resolves.toEqual({ ready: false });
+  });
+
+  it("saveSkills FAILS CLOSED when the action-guard service is missing (no write runs)", async () => {
+    const { ctx, uiActions } = makeCtx({}); // no guard
+    register(ctx);
+    await expect(
+      actionById(uiActions, "saveSkills").handler({ skillSyncEnabled: "true" }),
+    ).rejects.toThrow(/action-guard service is not registered/);
+    expect(mocks.saveAnthropicSkillSyncEnabled).not.toHaveBeenCalled();
+  });
+
+  it("saveSkills parses the hidden boolean input EXACTLY (\"true\"/\"false\" strings, not truthiness) after the manage gate passes", async () => {
+    const require = vi.fn(async () => {});
+    const { ctx, uiActions } = makeCtx({ "@cinatra-ai/host:extension-action-guard": { require } });
+    register(ctx);
+
+    mocks.saveAnthropicSkillSyncEnabled.mockResolvedValueOnce({ ok: true });
+    const r1 = await actionById(uiActions, "saveSkills").handler({ skillSyncEnabled: "true" });
+    expect(require).toHaveBeenCalledWith("@cinatra-ai/anthropic-connector", "manage");
+    expect(mocks.saveAnthropicSkillSyncEnabled).toHaveBeenCalledWith(true);
+    expect(r1).toEqual({ banner: "skillsSaved" });
+
+    mocks.saveAnthropicSkillSyncEnabled.mockResolvedValueOnce({ ok: true });
+    await actionById(uiActions, "saveSkills").handler({ skillSyncEnabled: "false" });
+    expect(mocks.saveAnthropicSkillSyncEnabled).toHaveBeenCalledWith(false);
+
+    // Anything other than the exact string "true" parses as false (fail-closed
+    // on a malformed/garbage submission) — mirrors the boolean field's own
+    // "true"/"false" string contract (BooleanRow), never truthiness.
+    mocks.saveAnthropicSkillSyncEnabled.mockResolvedValueOnce({ ok: true });
+    await actionById(uiActions, "saveSkills").handler({ skillSyncEnabled: "garbage" });
+    expect(mocks.saveAnthropicSkillSyncEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('saveSkills maps a fail-graceful {ok:false} result to the "skillsUnavailable" banner (pending cinatra-ai/cinatra#1104)', async () => {
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+    });
+    register(ctx);
+    mocks.saveAnthropicSkillSyncEnabled.mockResolvedValueOnce({ ok: false, reason: "unavailable" });
+    const r = await actionById(uiActions, "saveSkills").handler({ skillSyncEnabled: "true" });
+    expect(r).toEqual({ banner: "skillsUnavailable" });
+  });
+
+  it("helpContentReady is an always-ready, zero-dependency probe (Help tab is read-only static copy)", async () => {
+    const { ctx, uiActions } = makeCtx({});
+    register(ctx);
+    await expect(actionById(uiActions, "helpContentReady").handler({})).resolves.toEqual({ ready: true });
   });
 });

@@ -13,6 +13,8 @@ vi.mock("../index", () => ({
   saveAnthropicAPISettings: vi.fn(async () => ({})),
   clearAnthropicAPISettings: vi.fn(async () => ({})),
   getAnthropicAPIStatus: vi.fn(() => ({ status: "not_connected", detail: "" })),
+  getAnthropicSkillSyncCapabilityReady: vi.fn(() => false),
+  saveAnthropicSkillSyncEnabled: vi.fn(async () => ({ ok: false, reason: "unavailable" })),
   CLAUDE_MODELS: ["claude-x"],
 }));
 
@@ -102,5 +104,33 @@ describe("register(ctx) — transport-DI deps binding (Stage 3)", () => {
       /host service "@cinatra-ai\/host:anthropic-connection" is not registered/,
     );
     expect(() => getAnthropicDeps().nango.isConfigured()).toThrow(/nango-system/);
+  });
+
+  // cinatra-ai/cinatra#1104 (S3a) is a SIBLING migration, not yet landed — this
+  // is the ONE capability this connector resolves WITHOUT the fail-loud
+  // hostService() pattern, since a host that predates #1104 legitimately has no
+  // provider registered under this id.
+  it('anthropicSkillConfig resolves null (never throws) when the "@cinatra-ai/host:anthropic-skill-config" capability is absent — fail-graceful pending cinatra-ai/cinatra#1104', () => {
+    activateWithServices({});
+    expect(getAnthropicDeps().anthropicSkillConfig).toBeNull();
+  });
+
+  it("anthropicSkillConfig resolves the LIVE provider once the host registers it, re-resolving on every access (lazy getter, not cached)", () => {
+    const read = vi.fn(() => true);
+    const write = vi.fn();
+    const { resolveProviders } = activateWithServices({
+      "@cinatra-ai/host:anthropic-skill-config": { read, write },
+    });
+    expect(getAnthropicDeps().anthropicSkillConfig?.read()).toBe(true);
+    expect(read).toHaveBeenCalledTimes(1);
+    // Re-accessing the getter re-resolves via ctx (not a one-time snapshot) —
+    // same lazy-getter contract as nango.providerConfigKeys/connectionIds.
+    void getAnthropicDeps().anthropicSkillConfig;
+    expect(resolveProviders).toHaveBeenCalledWith("@cinatra-ai/host:anthropic-skill-config");
+  });
+
+  it("anthropicSkillConfig resolves null when the registered provider is malformed (missing read/write)", () => {
+    activateWithServices({ "@cinatra-ai/host:anthropic-skill-config": { read: () => true } }); // no write
+    expect(getAnthropicDeps().anthropicSkillConfig).toBeNull();
   });
 });
