@@ -1,0 +1,182 @@
+{
+  "signInAttempt0Status": 200,
+  "signedIn": "http://localhost:3301/",
+  "onboarding_after-signin_steps": 0,
+  "onboarding_after-signin_finalUrl": "http://localhost:3301/",
+  "finalUrl": "http://localhost:3301/connectors/cinatra-ai/anthropic-connector/setup",
+  "bodyTextSnippet": "ADMIN\nApprovals\nConfiguration\nINTELLIGENCE\nChat\nAgents\nMANAGEMENT\nPersonal\nProjects\nTeams\nOrganizations\nINFORMATION\nArtifacts\nData\nAnalytics\nTOOLS\nSkills\nConnectors\nVA\nVerify Admin\nverify-admin@tab-anthropic-44.local\nToggle Sidebar\nConnectors\nCinatra Ai\nAnthropic Connector\nAnthropic\nToggle theme\n1\nAnthropic\n\nConnector setup\n\nAnthropic\n\nConnect an Anthropic API key so Claude-powered agents and workflows can run. The key is stored securely via the connection service.\n\nSetup\nSkills\nHelp\nAPI key storage\nAPI keys are stored securely via the connection service.\nConnection\nCheck\nIdle\n\nCheck whether an Anthropic API key is configured.\n\nAnthropic API key\n\nCreate a key at console.anthropic.com. Write-only — the stored value is never shown again.\n\nDefault model\nClaude Sonnet 4.6\n\nThe default Claude m",
+  "tabs": [
+    {
+      "text": "Setup",
+      "ariaSelected": "true",
+      "tabIndex": -1,
+      "disabled": false
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "disabled": false
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "disabled": false
+    }
+  ],
+  "tablistCount": 1,
+  "tabStyles": [
+    {
+      "text": "Setup",
+      "ariaSelected": "true",
+      "color": "rgb(54, 78, 129)",
+      "fontSize": "13px",
+      "borderBottomWidth": "0px",
+      "borderBottomColor": "rgba(21, 33, 58, 0.14)"
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "false",
+      "color": "rgb(90, 100, 119)",
+      "fontSize": "13px",
+      "borderBottomWidth": "0px",
+      "borderBottomColor": "rgba(21, 33, 58, 0.14)"
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "false",
+      "color": "rgb(90, 100, 119)",
+      "fontSize": "13px",
+      "borderBottomWidth": "0px",
+      "borderBottomColor": "rgba(21, 33, 58, 0.14)"
+    }
+  ],
+  "tablistGeometry": {
+    "tablist": {
+      "x": 272,
+      "width": 153.453125,
+      "right": 425.453125
+    },
+    "parent": {
+      "x": 272,
+      "width": 992,
+      "right": 1264
+    },
+    "tablistBorderBottom": "1px rgba(21, 33, 58, 0.14)"
+  },
+  "widthInfo": {
+    "tablistAncestorMaxWidths": [
+      {
+        "tag": "DIV",
+        "cls": "mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-0 flex flex-col gap-6 pb-8",
+        "maxWidth": "1280px"
+      }
+    ],
+    "formAncestorMaxWidths": [
+      {
+        "tag": "DIV",
+        "cls": "mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-0 flex flex-col gap-6 pb-8",
+        "maxWidth": "1280px"
+      }
+    ]
+  },
+  "skillsAdvisoryWaitWarning": "TimeoutError: page.waitForSelector: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"schema-config-advisory\"]') to be visible\n    43 × locator resolved to 4 elements. Proceeding with the first one: <div role=\"alert\" data-slot=\"alert\" data-testid=\"schema-config-advisory\" class=\"relative w-full rounded-lg border px-4 py-3 text-sm grid has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] grid-cols-[0_1fr] has-[>svg]:gap-x-3 gap-y-0.5 items-start [&>svg]:size-4 [&>svg]:translate-y-0.5 bg-info/10 text-info border-info/30 [&>svg]:text-info *:data-[slot=alert-description]:text-info/90\">…</div>\n",
+  "skillsTabSelectedAfterClick": [
+    {
+      "text": "Setup",
+      "ariaSelected": "false"
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "true"
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "false"
+    }
+  ],
+  "skillsAdvisoryText": "API key storageAPI keys are stored securely via the connection service.ConnectionCheckIdleCheck whether an Anthropic API key is configured.Anthropic API keyCreate a key at console.anthropic.com. Write-only — the stored value is never shown again.Default modelClaude Sonnet 4.6The default Claude model agents use unless an agent overrides it.Save connectionSave connectionClear connectionClear connection",
+  "helpAdvisoryWaitWarning": "TimeoutError: page.waitForSelector: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid=\"schema-config-advisory\"]') to be visible\n    43 × locator resolved to 4 elements. Proceeding with the first one: <div role=\"alert\" data-slot=\"alert\" data-testid=\"schema-config-advisory\" class=\"relative w-full rounded-lg border px-4 py-3 text-sm grid has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] grid-cols-[0_1fr] has-[>svg]:gap-x-3 gap-y-0.5 items-start [&>svg]:size-4 [&>svg]:translate-y-0.5 bg-info/10 text-info border-info/30 [&>svg]:text-info *:data-[slot=alert-description]:text-info/90\">…</div>\n",
+  "helpTabSelectedAfterClick": [
+    {
+      "text": "Setup",
+      "ariaSelected": "false"
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "false"
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "true"
+    }
+  ],
+  "helpHasSaveButton": true,
+  "afterEnd": [
+    {
+      "text": "Setup",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "focused": false
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "focused": false
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "true",
+      "tabIndex": 0,
+      "focused": true
+    }
+  ],
+  "afterHome": [
+    {
+      "text": "Setup",
+      "ariaSelected": "true",
+      "tabIndex": 0,
+      "focused": true
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "focused": false
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "focused": false
+    }
+  ],
+  "afterArrowRight": [
+    {
+      "text": "Setup",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "focused": false
+    },
+    {
+      "text": "Skills",
+      "ariaSelected": "true",
+      "tabIndex": 0,
+      "focused": true
+    },
+    {
+      "text": "Help",
+      "ariaSelected": "false",
+      "tabIndex": -1,
+      "focused": false
+    }
+  ],
+  "tabpanelCount": 3,
+  "skillsToggle": {
+    "before": "false",
+    "after": "true"
+  },
+  "skillsSaveBannerText": ""
+}
