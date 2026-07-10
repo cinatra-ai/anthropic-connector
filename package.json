@@ -112,14 +112,15 @@
         },
         {
           "kind": "named-action",
-          "label": "Save connection",
-          "actionId": "saveConnection"
+          "label": "Connect",
+          "actionId": "saveConnection",
+          "role": "connect"
         },
         {
           "kind": "named-action",
-          "label": "Clear connection",
+          "label": "Disconnect",
           "actionId": "clearConnection",
-          "confirm": "Clear the stored Anthropic connection?"
+          "role": "disconnect"
         }
       ]
     }

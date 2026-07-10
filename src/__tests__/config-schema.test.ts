@@ -53,14 +53,20 @@ describe("anthropic-connector cinatra.configSchema", () => {
     expect(byKind("status-probe")[0]?.actionId).toBe("connectionStatus");
     expect(byKind("advisory")[0]?.probeActionId).toBe("connectionServiceReady");
 
-    // save + clear named actions (clear is confirm-gated).
+    // save + clear named actions carry the canonical connect/disconnect roles
+    // (owner ruling, connector-setup epic 2026-07-10 → design app-connectors §II
+    // items 7/8/15/16). clearConnection drops its `confirm` — the host
+    // renderer's neutral AlertDialog is now the sole confirmation path.
     const namedActions = byKind("named-action");
     const actionIds = namedActions.map((f) => f.actionId);
     expect(actionIds).toEqual(
       expect.arrayContaining(["saveConnection", "clearConnection"]),
     );
+    const save = namedActions.find((f) => f.actionId === "saveConnection");
     const clear = namedActions.find((f) => f.actionId === "clearConnection");
-    expect(clear?.confirm).toBeTruthy();
+    expect(save?.role).toBe("connect");
+    expect(clear?.role).toBe("disconnect");
+    expect(clear?.confirm).toBeUndefined();
 
     // saved / cleared / error banner variants.
     const banner = byKind("banner")[0];
