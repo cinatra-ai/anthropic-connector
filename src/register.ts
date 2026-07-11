@@ -237,6 +237,32 @@ export function register(ctx: ExtensionHostContext): void {
     },
   });
 
+  // READ (manage-gated): the persisted NON-SECRET setup values, keyed by
+  // declared field key — the connector's opt-in setup-form hydration read
+  // (root `hydrateAction` in cinatra.configSchema). The host invokes this
+  // SERVER-SIDE while rendering the setup page and threads the sanitized
+  // result in as the form's `initialValues`; every failure path resolves a
+  // blank form host-side, never an error page. Must stay a side-effect-free
+  // idempotent read (the host calls it on every setup render). NEVER returns
+  // the apiKey (write-only secret — and the host sanitizer refuses secret
+  // keys regardless). Manage-gated FIRST: the setup surface is admin-only,
+  // and a denied/missing guard fails closed before any store read.
+  ctx.ui.registerAction({
+    id: "currentConfig",
+    handler: async (): Promise<Record<string, string>> => {
+      await requireManage();
+      const out: Record<string, string> = {};
+      const model = getPersistedDefaultClaudeModel();
+      // Only a persisted, still-known model hydrates; absent (or a stored
+      // value no longer in CLAUDE_MODELS) leaves the form on its declared
+      // default rather than pre-filling an unselectable option.
+      if (model && (CLAUDE_MODELS as readonly string[]).includes(model)) {
+        out.defaultModel = model;
+      }
+      return out;
+    },
+  });
+
   // WRITE (manage-gated): persist the API key (synced to Nango) + the default
   // Claude model. The schema-config form posts the flat text/secret/select
   // inputs as JSON. A blank apiKey is treated as ABSENT (no overwrite) — the

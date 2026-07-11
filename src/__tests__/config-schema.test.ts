@@ -26,6 +26,25 @@ describe("anthropic-connector cinatra.configSchema", () => {
     expect(cinatra.requestedHostPorts).toContain("capabilities");
   });
 
+  it("opts in to setup-form hydration: root hydrateAction names the currentConfig read action", () => {
+    // The host invokes the declared action SERVER-SIDE at setup render and
+    // threads the sanitized NON-SECRET result in as the form's initialValues
+    // (see register-ui-actions.test.ts — the read is manage-gated and returns
+    // only the persisted defaultModel, never the apiKey).
+    expect((configSchema as { hydrateAction?: string }).hydrateAction).toBe("currentConfig");
+  });
+
+  it("rejects a malformed root hydrateAction declaration (fail-closed, same grammar as every actionId)", () => {
+    const base = { fields: [{ kind: "text", key: "k", label: "K" }] };
+    expect(validateConfigSchema({ ...base, hydrateAction: "currentConfig" })).toEqual([]);
+    for (const bad of ["", "1bad", "../x", 42, {}]) {
+      expect(
+        validateConfigSchema({ ...base, hydrateAction: bad }),
+        `expected hydrateAction ${JSON.stringify(bad)} to be rejected`,
+      ).toContain('configSchema: "hydrateAction" must be a valid actionId string');
+    }
+  });
+
   it("the declared configSchema parses with ZERO validation errors", () => {
     expect(validateConfigSchema(configSchema)).toEqual([]);
   });
