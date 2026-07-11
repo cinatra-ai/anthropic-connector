@@ -1104,7 +1104,10 @@ function validateConfigSchemaField(kind, raw, at, errors, seenKeys) {
 // "hydrateAction" is the opt-in setup-form hydration read-action declaration
 // (the SDK contract key CONFIG_HYDRATION_SCHEMA_KEY): the id of ONE registered
 // ui action the host invokes SERVER-SIDE at render to pre-fill the form with
-// saved NON-SECRET values. Mirrors the host parser's root allowlist.
+// saved NON-SECRET values. NOTE: this vendored allowlist is the SUBSET of the
+// host root vocabulary this connector uses — the host also accepts `tabs`,
+// which this gate copy predates and this manifest does not declare (adding it
+// here without the tab validation pass would WEAKEN the gate).
 const SCHEMA_CONFIG_ROOT_KEYS = new Set(["title", "description", "fields", "hydrateAction"]);
 
 export function validateConfigSchema(raw) {
