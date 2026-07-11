@@ -66,6 +66,7 @@
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "Anthropic",
+      "hydrateAction": "currentConfig",
       "description": "Connect an Anthropic API key so Claude-powered agents and workflows can run. The key is stored securely via the connection service.",
       "fields": [
         {

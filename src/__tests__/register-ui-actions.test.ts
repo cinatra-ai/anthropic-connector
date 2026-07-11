@@ -92,7 +92,7 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     const { ctx, uiActions } = makeCtx({});
     register(ctx);
     expect(uiActions.map((a) => a.id).sort()).toEqual(
-      ["clearConnection", "connectionServiceReady", "connectionStatus", "saveConnection"].sort(),
+      ["clearConnection", "connectionServiceReady", "connectionStatus", "currentConfig", "saveConnection"].sort(),
     );
   });
 
@@ -118,6 +118,48 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     await expect(actionById(uiActions, "connectionStatus").handler({})).resolves.toEqual({
       detail: "Anthropic is configured.",
     });
+  });
+
+  it("the manifest's root hydrateAction names the REGISTERED currentConfig read", () => {
+    const declared = (pkg as { cinatra?: { configSchema?: { hydrateAction?: string } } })
+      .cinatra?.configSchema?.hydrateAction;
+    expect(declared).toBe("currentConfig");
+    const { ctx, uiActions } = makeCtx({});
+    register(ctx);
+    expect(uiActions.map((a) => a.id)).toContain(declared);
+  });
+
+  it("currentConfig FAILS CLOSED when the action-guard service is missing (no store read runs)", async () => {
+    const { ctx, uiActions } = makeCtx({}); // no guard
+    register(ctx);
+    await expect(actionById(uiActions, "currentConfig").handler({})).rejects.toThrow(
+      /action-guard service is not registered/,
+    );
+    expect(mocks.getPersistedDefaultClaudeModel).not.toHaveBeenCalled();
+  });
+
+  it("currentConfig returns the persisted model (manage-gated) and NEVER an apiKey", async () => {
+    const require = vi.fn(async () => {});
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue("claude-opus-4-7");
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require },
+    });
+    register(ctx);
+    const out = (await actionById(uiActions, "currentConfig").handler({})) as Record<string, string>;
+    expect(require).toHaveBeenCalledWith("@cinatra-ai/anthropic-connector", "manage");
+    expect(out).toEqual({ defaultModel: "claude-opus-4-7" });
+    expect(out).not.toHaveProperty("apiKey");
+  });
+
+  it("currentConfig hydrates NOTHING when no model is persisted or the stored value is unknown", async () => {
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+    });
+    register(ctx);
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue(undefined);
+    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({});
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue("claude-retired-model");
+    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({});
   });
 
   it("saveConnection FAILS CLOSED when the action-guard service is missing (no write runs)", async () => {

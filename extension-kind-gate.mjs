@@ -1101,7 +1101,14 @@ function validateConfigSchemaField(kind, raw, at, errors, seenKeys) {
   }
 }
 
-const SCHEMA_CONFIG_ROOT_KEYS = new Set(["title", "description", "fields"]);
+// "hydrateAction" is the opt-in setup-form hydration read-action declaration
+// (the SDK contract key CONFIG_HYDRATION_SCHEMA_KEY): the id of ONE registered
+// ui action the host invokes SERVER-SIDE at render to pre-fill the form with
+// saved NON-SECRET values. NOTE: this vendored allowlist is the SUBSET of the
+// host root vocabulary this connector uses — the host also accepts `tabs`,
+// which this gate copy predates and this manifest does not declare (adding it
+// here without the tab validation pass would WEAKEN the gate).
+const SCHEMA_CONFIG_ROOT_KEYS = new Set(["title", "description", "fields", "hydrateAction"]);
 
 export function validateConfigSchema(raw) {
   if (!isObj(raw)) return ["must be an object"];
@@ -1115,6 +1122,14 @@ export function validateConfigSchema(raw) {
   }
   if (raw.description !== undefined && !nonEmptyStr(raw.description)) {
     errors.push(`configSchema: "description" must be a non-empty string when present`);
+  }
+  // Fail-closed like the host parser: a present-but-malformed hydrateAction is
+  // a validation error (same actionId grammar, identical error string).
+  if (
+    raw.hydrateAction !== undefined &&
+    (!nonEmptyStr(raw.hydrateAction) || !SCHEMA_CONFIG_KEY_RE.test(raw.hydrateAction))
+  ) {
+    errors.push(`configSchema: "hydrateAction" must be a valid actionId string`);
   }
   const seenKeys = new Set();
   raw.fields.forEach((field, i) => {
