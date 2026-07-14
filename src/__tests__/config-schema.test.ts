@@ -131,5 +131,121 @@ describe("anthropic-connector cinatra.configSchema", () => {
         expect(errs.length, `expected ${evil} to be rejected`).toBeGreaterThan(0);
       }
     });
+
+    // ---- tabs (cinatra#1102 grouping) ----
+
+    it("rejects tabs that is not an array", () => {
+      expect(validateConfigSchema({ fields: [{ kind: "text", key: "a", label: "A" }], tabs: "nope" }).length).toBeGreaterThan(0);
+    });
+
+    it("rejects a duplicate tab id", () => {
+      const errs = validateConfigSchema({
+        fields: [{ kind: "text", key: "a", label: "A" }],
+        tabs: [
+          { id: "skills", label: "Skills", fields: [{ kind: "boolean", key: "b1", label: "B1" }] },
+          { id: "skills", label: "Skills Again", fields: [{ kind: "boolean", key: "b2", label: "B2" }] },
+        ],
+      });
+      expect(errs.length).toBeGreaterThan(0);
+    });
+
+    it("rejects an UNKNOWN key on a tab (no executable/HTML carrier smuggled in)", () => {
+      const errs = validateConfigSchema({
+        fields: [{ kind: "text", key: "a", label: "A" }],
+        tabs: [{ id: "skills", label: "Skills", fields: [{ kind: "boolean", key: "b1", label: "B1" }], onClick: "x" }],
+      });
+      expect(errs.length).toBeGreaterThan(0);
+    });
+
+    it("rejects a tab with an empty fields array", () => {
+      const errs = validateConfigSchema({
+        fields: [{ kind: "text", key: "a", label: "A" }],
+        tabs: [{ id: "help", label: "Help", fields: [] }],
+      });
+      expect(errs.length).toBeGreaterThan(0);
+    });
+
+    it("rejects a field key duplicated ACROSS the base fields and a tab (one flat submit namespace)", () => {
+      const errs = validateConfigSchema({
+        fields: [{ kind: "text", key: "dup", label: "A" }],
+        tabs: [{ id: "skills", label: "Skills", fields: [{ kind: "boolean", key: "dup", label: "B" }] }],
+      });
+      expect(errs.length).toBeGreaterThan(0);
+    });
+
+    it("accepts the boolean/dynamic-select-options/number/free-list kinds cinatra#782 added", () => {
+      expect(
+        validateConfigSchema({
+          fields: [
+            { kind: "boolean", key: "b", label: "B", defaultValue: false },
+            { kind: "number", key: "n", label: "N", min: 0, max: 10, step: 1, defaultValue: 5 },
+            { kind: "free-list", key: "f", label: "F" },
+            { kind: "dynamic-select-options", key: "d", label: "D", optionsAction: "listOptions" },
+          ],
+        }),
+      ).toEqual([]);
+    });
+  });
+
+  describe("tabs — Skills + Help (cinatra-ai/cinatra#44)", () => {
+    const tabs = (configSchema as { tabs?: Array<Record<string, unknown>> }).tabs ?? [];
+    const byId = (id: string) => tabs.find((t) => t.id === id);
+
+    it("declares exactly the Skills and Help tabs", () => {
+      expect(tabs.map((t) => t.id)).toEqual(["skills", "help"]);
+    });
+
+    it("Skills tab carries the sync-enabled toggle, a capability-gated advisory, and its own save + banner", () => {
+      const skills = byId("skills");
+      expect(skills).toBeDefined();
+      const fields = skills!.fields as Array<Record<string, unknown>>;
+      const byKind = (k: string) => fields.filter((f) => f.kind === k);
+
+      const toggle = byKind("boolean").find((f) => f.key === "skillSyncEnabled");
+      expect(toggle).toBeDefined();
+      expect(toggle?.defaultValue).toBe(false);
+
+      const advisory = byKind("advisory")[0];
+      expect(advisory?.probeActionId).toBe("skillsCapabilityReady");
+      expect(advisory?.whenReady).toMatch(/not ZDR-eligible/i);
+      expect(advisory?.whenNotReady).toMatch(/not available/i);
+
+      const namedActions = byKind("named-action");
+      expect(namedActions.map((f) => f.actionId)).toContain("saveSkills");
+
+      const banner = byKind("banner")[0];
+      const variantNames = (banner!.variants as Array<{ name: string }>).map((v) => v.name);
+      expect(variantNames).toEqual(expect.arrayContaining(["skillsSaved", "skillsUnavailable", "error"]));
+    });
+
+    it("Help tab is read-only (no named-action / no Save) and carries the setup how-to", () => {
+      const help = byId("help");
+      expect(help).toBeDefined();
+      const fields = help!.fields as Array<Record<string, unknown>>;
+      expect(fields.every((f) => f.kind === "advisory")).toBe(true);
+      expect(fields.some((f) => (f.whenReady as string).includes("console.anthropic.com"))).toBe(true);
+    });
+
+    it("every declared action id used by a tab field is registered by register.ts's ctx.ui.registerAction calls", async () => {
+      // Cross-check against the source text rather than importing register.ts
+      // (which requires a full ExtensionHostContext) — every actionId/
+      // probeActionId declared in the manifest must have a matching
+      // `id: "<name>"` registration, or the host action-dispatch endpoint would
+      // 404 it at runtime.
+      const fs = await import("node:fs");
+      const registerSrc = fs.readFileSync(new URL("../register.ts", import.meta.url), "utf8");
+      const allTabFields = tabs.flatMap((t) => t.fields as Array<Record<string, unknown>>);
+      const actionIds = new Set<string>();
+      for (const f of allTabFields) {
+        if (typeof f.actionId === "string") actionIds.add(f.actionId);
+        if (typeof f.probeActionId === "string") actionIds.add(f.probeActionId);
+      }
+      expect(actionIds.size).toBeGreaterThan(0);
+      for (const id of actionIds) {
+        expect(registerSrc, `expected register.ts to register action "${id}"`).toMatch(
+          new RegExp(`id:\\s*"${id}"`),
+        );
+      }
+    });
   });
 });

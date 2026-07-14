@@ -57,8 +57,12 @@
 //     - schema-config: a connector declaring uiSurface:"schema-config" must ship
 //       a valid cinatra.configSchema (mirrors classifyConnectorUiSurfaceErrors).
 //       The grammar covers the 7 base field kinds (text/secret/nango-connect/
-//       repeatable-list/status-probe/copyable-credential/named-action) plus the
-//       PR-4 Track-3 additions (select/record-list/advisory/banner). Every kind
+//       repeatable-list/status-probe/copyable-credential/named-action), the
+//       PR-4 Track-3 additions (select/record-list/advisory/banner), the
+//       cinatra#782 additions (dynamic-select-options/boolean/number/free-list),
+//       and the cinatra#1102 optional root `tabs` grouping (a base "Setup" tab
+//       implied by `fields` + declared tab groups, Help-last is a render-time
+//       normalization not checked here). Every kind
 //       is pure DATA: no field carries executable code or HTML; action refs are
 //       BY ID only (host resolves + authorizes them).
 //     - roles: when present, cinatra.roles must be a string[] (the agent-bindings
@@ -889,19 +893,25 @@ function validateLicensePresence(pkg, warnings) {
 // scripts/extensions/generate-extension-manifest.mjs validateConfigSchema.
 // ===========================================================================
 const SCHEMA_CONFIG_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
-// The 7 base kinds plus the four PR-4 Track-3 additions (select, record-list,
-// advisory, banner). The host parser (src/lib/extension-schema-config.ts) is
-// extended with the SAME grammar in cinatra#658; this gate is the rules-only
-// standalone port. Every kind is PURE DATA — no field may carry executable code
-// or arbitrary HTML. `adminOnly` (select options) is a host-evaluated VISIBILITY
-// hint declared as data; the connector never evaluates it. record-list/named-
-// action/advisory reference host-registered named actions BY ID only — the host
-// resolves + authorizes them at the `/api/extensions/{installId}/actions/...`
-// endpoint (actor evaluated host-side).
+// The 7 base kinds, the four PR-4 Track-3 additions (select, record-list,
+// advisory, banner), the cinatra#782 openai-blocking expansion
+// (dynamic-select-options, boolean, number, free-list), and the cinatra#1102
+// tab/section grouping (the optional root `tabs` key — see
+// SCHEMA_CONFIG_ROOT_KEYS + validateConfigSchemaTabs below). The host parser
+// (src/lib/extension-schema-config.ts) is the authoritative source this gate
+// is the rules-only standalone port of. Every kind is PURE DATA — no field may
+// carry executable code or arbitrary HTML. `adminOnly` (select options) is a
+// host-evaluated VISIBILITY hint declared as data; the connector never
+// evaluates it. record-list/named-action/advisory/status-probe/
+// dynamic-select-options reference host-registered named actions BY ID only —
+// the host resolves + authorizes them at the
+// `/api/extensions/{installId}/actions/...` endpoint (actor evaluated
+// host-side).
 const SCHEMA_CONFIG_FIELD_KINDS = new Set([
   "text", "secret", "nango-connect", "repeatable-list", "status-probe",
   "copyable-credential", "named-action",
   "select", "record-list", "advisory", "banner",
+  "dynamic-select-options", "boolean", "number", "free-list",
 ]);
 const SCHEMA_CONFIG_BADGE_VARIANTS = new Set([
   "outline", "secondary", "destructive", "muted", "success", "warning", "default",
@@ -930,10 +940,27 @@ const SCHEMA_CONFIG_ALLOWED_KEYS = {
   ]),
   advisory: new Set(["kind", "label", "tone", "probeActionId", "whenReady", "whenNotReady", "description"]),
   banner: new Set(["kind", "label", "variants"]),
+  "dynamic-select-options": new Set([
+    "kind", "key", "label", "optionsAction", "defaultValue", "placeholder", "description",
+  ]),
+  boolean: new Set(["kind", "key", "label", "defaultValue", "description"]),
+  number: new Set([
+    "kind", "key", "label", "min", "max", "step", "defaultValue", "placeholder", "required", "description",
+  ]),
+  "free-list": new Set(["kind", "key", "label", "itemLabel", "placeholder", "description"]),
 };
 const SCHEMA_CONFIG_OPTION_KEYS = new Set(["value", "label", "adminOnly"]);
 const SCHEMA_CONFIG_BADGE_KEYS = new Set(["key", "label", "variant"]);
 const SCHEMA_CONFIG_BANNER_VARIANT_KEYS = new Set(["name", "tone", "message"]);
+// A tab carries ONLY an id, a label, and a nested `fields` array (same
+// fail-closed stance as every other allowlist here — never an executable/HTML
+// carrier key).
+const SCHEMA_CONFIG_TAB_KEYS = new Set(["id", "label", "fields"]);
+/** A finite number (rejects NaN/±Infinity/non-number) — fail-closed, mirrors
+ *  the host parser's `finiteNum`. */
+function isFiniteNum(v) {
+  return typeof v === "number" && Number.isFinite(v);
+}
 
 /** Push an error for any key on `raw` not in `allowed` (fail-closed: no
  *  unexpected/executable carrier keys). */
@@ -952,7 +979,10 @@ function validateConfigSchemaField(kind, raw, at, errors, seenKeys) {
     errors.push(`${at}: missing "label"`);
     return;
   }
-  const needsKey = kind === "text" || kind === "secret" || kind === "copyable-credential" || kind === "repeatable-list" || kind === "select";
+  const needsKey =
+    kind === "text" || kind === "secret" || kind === "copyable-credential" || kind === "repeatable-list" ||
+    kind === "select" || kind === "dynamic-select-options" || kind === "boolean" || kind === "number" ||
+    kind === "free-list";
   if (needsKey) {
     if (!nonEmptyStr(raw.key) || !SCHEMA_CONFIG_KEY_RE.test(raw.key)) {
       errors.push(`${at}: invalid or missing "key"`);
@@ -1099,16 +1129,116 @@ function validateConfigSchemaField(kind, raw, at, errors, seenKeys) {
       }
     });
   }
+  // ---- dynamic-select-options: a select whose OPTIONS are action-sourced
+  //      (cinatra#782) — the renderer fetches `optionsAction` at mount. Only
+  //      the action id is declared here; membership of `defaultValue` in the
+  //      fetched options can't be checked at this static-validation stage.
+  if (kind === "dynamic-select-options") {
+    if (!nonEmptyStr(raw.optionsAction) || !SCHEMA_CONFIG_KEY_RE.test(raw.optionsAction)) {
+      errors.push(`${at}: dynamic-select-options requires a valid "optionsAction"`);
+    }
+    if (raw.defaultValue !== undefined && !nonEmptyStr(raw.defaultValue)) {
+      errors.push(`${at}: dynamic-select-options "defaultValue" must be a non-empty string when present`);
+    }
+  }
+  // ---- boolean: a Switch toggle (cinatra#782). `defaultValue` is a real
+  //      boolean primitive, never a truthy stand-in.
+  if (kind === "boolean" && raw.defaultValue !== undefined && typeof raw.defaultValue !== "boolean") {
+    errors.push(`${at}: boolean "defaultValue" must be a boolean when present`);
+  }
+  // ---- number: a numeric input with optional min/max/step (cinatra#782).
+  //      Every bound must be a finite number; step must be positive; min<=max;
+  //      defaultValue (when present) must fall within [min, max].
+  if (kind === "number") {
+    for (const prop of ["min", "max", "step", "defaultValue"]) {
+      if (raw[prop] !== undefined && !isFiniteNum(raw[prop])) {
+        errors.push(`${at}: number "${prop}" must be a finite number when present`);
+      }
+    }
+    const min = isFiniteNum(raw.min) ? raw.min : undefined;
+    const max = isFiniteNum(raw.max) ? raw.max : undefined;
+    const step = isFiniteNum(raw.step) ? raw.step : undefined;
+    const defaultValue = isFiniteNum(raw.defaultValue) ? raw.defaultValue : undefined;
+    if (step !== undefined && step <= 0) {
+      errors.push(`${at}: number "step" must be greater than 0`);
+    }
+    if (min !== undefined && max !== undefined && min > max) {
+      errors.push(`${at}: number "min" must be <= "max"`);
+    }
+    if (
+      defaultValue !== undefined &&
+      ((min !== undefined && defaultValue < min) || (max !== undefined && defaultValue > max))
+    ) {
+      errors.push(`${at}: number "defaultValue" is outside [min, max]`);
+    }
+  }
+  // ---- free-list: an add/remove editor for a free-form string[] (cinatra#782).
+  //      No further shape beyond the allowlisted keys above (itemLabel/
+  //      placeholder are plain optional strings).
 }
 
 // "hydrateAction" is the opt-in setup-form hydration read-action declaration
 // (the SDK contract key CONFIG_HYDRATION_SCHEMA_KEY): the id of ONE registered
 // ui action the host invokes SERVER-SIDE at render to pre-fill the form with
-// saved NON-SECRET values. NOTE: this vendored allowlist is the SUBSET of the
-// host root vocabulary this connector uses — the host also accepts `tabs`,
-// which this gate copy predates and this manifest does not declare (adding it
-// here without the tab validation pass would WEAKEN the gate).
-const SCHEMA_CONFIG_ROOT_KEYS = new Set(["title", "description", "fields", "hydrateAction"]);
+// saved NON-SECRET values. "tabs" is the setup-surface tab/section grouping
+// (cinatra#1102), validated by validateConfigSchemaTabs below. This vendored
+// allowlist is the SUBSET of the host root vocabulary this connector declares.
+const SCHEMA_CONFIG_ROOT_KEYS = new Set(["title", "description", "fields", "hydrateAction", "tabs"]);
+
+/**
+ * Validate the optional root `tabs` key (cinatra#1102 — the tab/section
+ * grouping over the setup surface, design spec app-connectors §II). Mirrors
+ * the host parser's `parseTabs`: fail-closed on an unknown per-tab key, a
+ * missing/invalid/duplicate id, a missing label, or an empty `fields`; field
+ * keys share the SAME `seenKeys` set as the base fields (one flat submit
+ * namespace). This validator does not need to reproduce the host's
+ * Help-tab-always-last REORDERING — that is a render-time normalization, not a
+ * validity rule — so it only checks shape.
+ */
+function validateConfigSchemaTabs(raw, errors, seenKeys) {
+  if (!Array.isArray(raw)) {
+    errors.push("configSchema.tabs must be an array");
+    return;
+  }
+  const seenTabIds = new Set();
+  raw.forEach((tab, i) => {
+    const at = `tabs[${i}]`;
+    if (!isObj(tab)) {
+      errors.push(`${at}: must be an object`);
+      return;
+    }
+    rejectUnknownKeys(tab, SCHEMA_CONFIG_TAB_KEYS, at, errors);
+    if (!nonEmptyStr(tab.id) || !SCHEMA_CONFIG_KEY_RE.test(tab.id)) {
+      errors.push(`${at}: invalid or missing "id"`);
+      return;
+    }
+    if (seenTabIds.has(tab.id)) {
+      errors.push(`${at}: duplicate tab id ${JSON.stringify(tab.id)}`);
+      return;
+    }
+    seenTabIds.add(tab.id);
+    if (!nonEmptyStr(tab.label)) {
+      errors.push(`${at}: missing "label"`);
+      return;
+    }
+    if (!Array.isArray(tab.fields) || tab.fields.length === 0) {
+      errors.push(`${at}: tab requires a non-empty "fields" array`);
+      return;
+    }
+    tab.fields.forEach((field, j) => {
+      const fieldAt = `${at}.fields[${j}]`;
+      if (!isObj(field)) {
+        errors.push(`${fieldAt}: must be an object`);
+        return;
+      }
+      if (typeof field.kind !== "string" || !SCHEMA_CONFIG_FIELD_KINDS.has(field.kind)) {
+        errors.push(`${fieldAt}: unknown field kind ${JSON.stringify(field.kind)}`);
+        return;
+      }
+      validateConfigSchemaField(field.kind, field, fieldAt, errors, seenKeys);
+    });
+  });
+}
 
 export function validateConfigSchema(raw) {
   if (!isObj(raw)) return ["must be an object"];
@@ -1144,6 +1274,11 @@ export function validateConfigSchema(raw) {
     }
     validateConfigSchemaField(field.kind, field, at, errors, seenKeys);
   });
+  // Optional tab groups (cinatra#1102). Parsed with the SAME seenKeys set so a
+  // field key is unique across the base fields AND every tab.
+  if (raw.tabs !== undefined) {
+    validateConfigSchemaTabs(raw.tabs, errors, seenKeys);
+  }
   return errors;
 }
 

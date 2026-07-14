@@ -332,3 +332,75 @@ export async function clearAnthropicAPISettings() {
   );
   await deps.nango.clearConnectionRecords("claude");
 }
+
+// ---------------------------------------------------------------------------
+// Skills tab (cinatra-ai/cinatra#44 — Epic connector-setup-tabs S3b).
+//
+// The `anthropic-skill-sync-enabled` opt-in + its ZDR advisory move here from
+// core's `_default-llm-select.tsx` / `campaigns/actions.ts`, per cinatra#1104
+// (S3a — a sibling migration moving the read/write out of core into the
+// `anthropicSkillConfig` host capability, see deps.ts). #1104 is in progress
+// as of this writing, so every function below degrades GRACEFULLY when
+// `anthropicSkillConfig` is absent (an older host) rather than throwing —
+// the Skills tab still renders; only the round-trip persistence is gated.
+// ---------------------------------------------------------------------------
+
+/** Whether the host exposes the Skills-setting capability yet (drives the
+ *  Skills tab's `skillsCapabilityReady` advisory probe — see register.ts). */
+export function getAnthropicSkillSyncCapabilityReady(): boolean {
+  return getAnthropicDeps().anthropicSkillConfig != null;
+}
+
+/**
+ * The persisted skill-upload opt-in. Returns `false` (the safe, DEFAULT-OFF
+ * value — mirrors `readAnthropicSkillSyncEnabledFromDatabase`'s fail-closed
+ * stance) when the host capability is absent, exactly like every other
+ * "not yet configured" state this connector already resolves to a safe
+ * default.
+ */
+export function getAnthropicSkillSyncEnabled(): boolean {
+  return getAnthropicDeps().anthropicSkillConfig?.read() ?? false;
+}
+
+export type SaveAnthropicSkillSyncResult = { ok: true } | { ok: false; reason: "unavailable" };
+
+/**
+ * Persist the skill-upload opt-in through the host capability. ALWAYS applies
+ * the submitted value verbatim — this DELIBERATELY does NOT mirror
+ * `saveConnection`'s "keep-persisted no-loss" guard for `defaultModel`
+ * (codex convergence, round 1: that guard, ported here unchanged, made the
+ * toggle "effectively enable-only" — a submitted `false` over a persisted
+ * `true` was always treated as an un-prepopulated resubmit and silently
+ * skipped, so an admin could turn upload ON but never OFF again via this UI).
+ * Two things make dropping the guard the right call for THIS field, unlike
+ * `defaultModel`:
+ *   1. `defaultModel` is co-submitted on the SHARED "Save connection" button
+ *      alongside `apiKey`, so a save the admin intended only for the API key
+ *      must not also silently apply the declared-default model. `skillSyncEnabled`
+ *      has its OWN dedicated "Save Skills settings" button that submits
+ *      nothing else meaningful — every invocation IS a deliberate Skills-tab
+ *      save, so there is no "unrelated save" case to protect against.
+ *   2. This is a data-residency-sensitive opt-in (uploads leave the instance
+ *      to a non-ZDR-eligible third party). Where `initialValues` isn't
+ *      threaded into schema-config forms yet (so the toggle always renders
+ *      its declared-off default rather than the true persisted value — a
+ *      real, separate, tracked limitation), the SAFE failure direction is
+ *      toward OFF, not toward silently preserving an already-enabled upload
+ *      that the admin can no longer see or turn off.
+ * The residual rough edge — visiting the Skills tab and clicking Save without
+ * touching the toggle silently disables an existing opt-in — is bounded (it
+ * requires deliberately opening this tab and clicking its own Save button)
+ * and fails toward less data exposure; it resolves once the host threads real
+ * initialValues and the toggle reflects the true persisted state on load.
+ *
+ * Fail-graceful: returns `{ ok: false, reason: "unavailable" }` (never throws,
+ * writes nothing) when the host capability is absent — cinatra-ai/cinatra#1104
+ * has not landed yet. The caller (register.ts's `saveSkills` action) maps this
+ * to the `skillsUnavailable` banner variant.
+ */
+export async function saveAnthropicSkillSyncEnabled(submitted: boolean): Promise<SaveAnthropicSkillSyncResult> {
+  const cap = getAnthropicDeps().anthropicSkillConfig;
+  if (!cap) return { ok: false, reason: "unavailable" };
+  await cap.write(submitted);
+  return { ok: true };
+}

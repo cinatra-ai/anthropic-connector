@@ -34,6 +34,8 @@ import {
   saveAnthropicAPISettings,
   clearAnthropicAPISettings,
   getAnthropicAPIStatus,
+  getAnthropicSkillSyncCapabilityReady,
+  saveAnthropicSkillSyncEnabled,
   CLAUDE_MODELS,
   type ClaudeModel,
 } from "./index";
@@ -42,6 +44,7 @@ import {
   registerAnthropicConnector,
   getAnthropicDeps,
   type AnthropicConnectorDeps,
+  type HostAnthropicSkillConfigShape,
 } from "./deps";
 
 const PACKAGE_NAME = "@cinatra-ai/anthropic-connector";
@@ -93,6 +96,25 @@ function hostService<T>(ctx: ExtensionHostContext, capability: string): T {
     );
   }
   return provider.impl as T;
+}
+
+/**
+ * PROVISIONAL resolver for the Skills-setting host capability
+ * (cinatra-ai/cinatra#1104 — see deps.ts's HostAnthropicSkillConfigShape doc).
+ * Unlike `hostService()`, this NEVER throws on absence — #1104 is in progress
+ * on a sibling lane, so a host that predates it simply has no provider
+ * registered under this id yet, and every Skills-tab caller (index.ts) must
+ * degrade gracefully rather than crash registration or a probe/save call. The
+ * capability id + shape are this connector's best-informed guess at what
+ * #1104 will expose (mirroring the existing
+ * readConnectorConfigFromDatabase/writeConnectorConfigToDatabase pattern);
+ * this is the SINGLE site to update if the landed contract differs.
+ */
+function tryAnthropicSkillConfig(ctx: ExtensionHostContext): HostAnthropicSkillConfigShape | null {
+  const provider = ctx.capabilities.resolveProviders("@cinatra-ai/host:anthropic-skill-config")[0];
+  const impl = provider?.impl as HostAnthropicSkillConfigShape | undefined;
+  if (!impl || typeof impl.read !== "function" || typeof impl.write !== "function") return null;
+  return impl;
 }
 
 /** The connector-authored nango-system surface (registered by the nango
@@ -156,6 +178,14 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): AnthropicConnectorDeps {
       get connectionIds() {
         return { claude: nango().connectionIds.claude };
       },
+    },
+    // PROVISIONAL (cinatra-ai/cinatra#1104): a getter so EVERY access
+    // freshly re-resolves via ctx (never cached null) — the same lazy-getter
+    // pattern as `nango.providerConfigKeys`/`connectionIds` above, so a host
+    // that activates this connector before #1104 lands and is later upgraded
+    // (without a re-activation) still picks the capability up on next access.
+    get anthropicSkillConfig() {
+      return tryAnthropicSkillConfig(ctx);
     },
   };
 }
@@ -308,5 +338,52 @@ export function register(ctx: ExtensionHostContext): void {
       await clearAnthropicAPISettings();
       return { banner: "cleared" };
     },
+  });
+
+  // ---- Skills tab (cinatra-ai/cinatra#44 — Epic connector-setup-tabs S3b) ----
+  //
+  // Moves the `anthropic-skill-sync-enabled` opt-in + its ZDR advisory out of
+  // core (`_default-llm-select.tsx` / `campaigns/actions.ts`) into a dedicated
+  // "Skills" tab, per cinatra-ai/cinatra#1104 (S3a — a sibling lane migrating
+  // the setting's read/write into the `anthropicSkillConfig` host capability;
+  // see deps.ts + tryAnthropicSkillConfig above). #1104 has not landed as of
+  // this writing, so `skillsCapabilityReady` + `saveSkills` below degrade
+  // GRACEFULLY (never throw) when the capability is absent — the tab still
+  // renders; only its persistence round-trip is gated on the capability.
+
+  // READ/PROBE: whether the host exposes the Skills capability yet — drives
+  // the Skills tab's data-residency advisory (ready → the ZDR warning;
+  // not-ready → "not available on this host version yet").
+  ctx.ui.registerAction({
+    id: "skillsCapabilityReady",
+    handler: async (): Promise<{ ready: boolean }> => ({
+      ready: getAnthropicSkillSyncCapabilityReady(),
+    }),
+  });
+
+  // WRITE (manage-gated): persist the skill-upload opt-in. Fail-graceful — an
+  // absent host capability returns the "skillsUnavailable" banner instead of
+  // throwing (the manage gate itself still fails CLOSED, same as every other
+  // write action here).
+  ctx.ui.registerAction({
+    id: "saveSkills",
+    handler: async (input: unknown): Promise<{ banner: string }> => {
+      await requireManage();
+      const fields = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+      const submitted = fields.skillSyncEnabled === "true";
+      const result = await saveAnthropicSkillSyncEnabled(submitted);
+      return { banner: result.ok ? "skillsSaved" : "skillsUnavailable" };
+    },
+  });
+
+  // ---- Help tab ----
+  //
+  // Read-only setup how-to (design spec app-connectors §II: "no form, no
+  // Save"). The schema-config vocabulary has no plain static-text field kind,
+  // so the Help tab's prose rides the `advisory` field kind via this trivial,
+  // always-ready, zero-I/O probe — both Help fields share it.
+  ctx.ui.registerAction({
+    id: "helpContentReady",
+    handler: async (): Promise<{ ready: boolean }> => ({ ready: true }),
   });
 }

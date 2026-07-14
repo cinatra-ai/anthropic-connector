@@ -123,6 +123,65 @@
           "actionId": "clearConnection",
           "role": "disconnect"
         }
+      ],
+      "tabs": [
+        {
+          "id": "skills",
+          "label": "Skills",
+          "fields": [
+            {
+              "kind": "banner",
+              "label": "Result",
+              "variants": [
+                { "name": "skillsSaved", "tone": "success", "message": "Skill upload setting saved." },
+                { "name": "skillsUnavailable", "tone": "warning", "message": "Skills settings are not available on this host version yet — update the host to manage Anthropic skill upload here." },
+                { "name": "error", "tone": "destructive", "message": "Something went wrong." }
+              ]
+            },
+            {
+              "kind": "advisory",
+              "label": "Data residency — not ZDR-eligible",
+              "tone": "warning",
+              "probeActionId": "skillsCapabilityReady",
+              "whenReady": "Anthropic Custom Skills are not ZDR-eligible. Enabling this uploads skill bodies and their bundled directories off this instance to Anthropic Custom Skills (workspace / API-key-wide), where Anthropic retains them. Only skills explicitly allowed per skill are uploaded; all others stay local even when this is on.",
+              "whenNotReady": "Skills settings are not available on this host version yet. Update the host to manage Anthropic skill upload here."
+            },
+            {
+              "kind": "boolean",
+              "key": "skillSyncEnabled",
+              "label": "Upload skill content to Anthropic",
+              "defaultValue": false,
+              "description": "Sync catalog skills to Anthropic Custom Skills so Anthropic-pinned agents can use them. Default off. Individual skills are excluded unless explicitly allowed per skill."
+            },
+            {
+              "kind": "named-action",
+              "label": "Save Skills settings",
+              "actionId": "saveSkills"
+            }
+          ]
+        },
+        {
+          "id": "help",
+          "label": "Help",
+          "fields": [
+            {
+              "kind": "advisory",
+              "label": "Connect Anthropic",
+              "tone": "info",
+              "probeActionId": "helpContentReady",
+              "whenReady": "Create an API key at console.anthropic.com, paste it into the Anthropic API key field on the Setup tab, and save. Pick a default Claude model on the Setup tab — agents use it unless they override it.",
+              "whenNotReady": "Create an API key at console.anthropic.com, paste it into the Anthropic API key field on the Setup tab, and save. Pick a default Claude model on the Setup tab — agents use it unless they override it."
+            },
+            {
+              "kind": "advisory",
+              "label": "About Skills upload",
+              "tone": "warning",
+              "probeActionId": "helpContentReady",
+              "whenReady": "The Skills tab lets Anthropic-pinned agents use your catalog skills. Anthropic Custom Skills are not ZDR-eligible: enabling upload sends skill bodies and their bundled directories to Anthropic, where they are retained. Only skills explicitly allowed per skill are uploaded.",
+              "whenNotReady": "The Skills tab lets Anthropic-pinned agents use your catalog skills. Anthropic Custom Skills are not ZDR-eligible: enabling upload sends skill bodies and their bundled directories to Anthropic, where they are retained. Only skills explicitly allowed per skill are uploaded."
+            }
+          ]
+        }
       ]
     }
   }
