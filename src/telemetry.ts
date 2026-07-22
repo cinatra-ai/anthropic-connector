@@ -7,18 +7,49 @@
 // keeps its own `telemetry.ts` copy (which also routes openai/gemini via the
 // `llm-provider-surface` and exposes `writeLlmLogFile`) until the final
 // core-deletion PR — only the ANTHROPIC writer + its dependency-light closure
-// (log directory, redaction, enabled-flag) are relocated here.
+// (log directory, redaction) are relocated here.
 //
-// The logging-enabled gate reads the connector-local `./logging-state` flag; see
-// that module's divergence note (core's admin toggle does not reach this copy).
+// LOGGING AUTHORITY (cinatra#1715 D2 — core PR #1969). The logging-`enabled`
+// gate is STATELESS: it reads the persisted authority — the host connector-config
+// key `anthropic-logging`, default-ENABLED unless an explicit `{enabled:false}` —
+// through the connector's own host deps slot on EVERY call, never a
+// connector-local module-state flag. That module state (the pre-#1969
+// `logging-state.ts`, default-on) lived in a DIFFERENT realm than the host admin
+// toggle once the adapter relocates, so the switch stopped reaching this writer
+// (the split-brain the stage-1 artifact flagged). The flag now lives in the
+// single connector-config authority both realms read: this mirrors core's
+// `readAnthropicLoggingEnabledFromDatabase()` (src/lib/database.ts) and OpenAI's
+// stateless connection-config-driven logging. The admin WRITE path
+// (`saveAnthropicLoggingSettings` → the `anthropic-logging` key) stays host-side;
+// this connector only READS. Default-ENABLED preserves the prior default-on
+// behaviour exactly (absent/`{}` ⇒ true).
 
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { redactAuthorizationDeep } from "./log-redaction";
 import { ANTHROPIC_API_LOG_DIRECTORY } from "./log-directory";
-import { isAnthropicLoggingEnabled } from "./logging-state";
+import { getAnthropicDeps } from "./deps";
 
 const MAX_ANTHROPIC_LOG_FILES = 200;
+
+// The persisted-authority connector-config key holding the Anthropic
+// request-logging `{ enabled }` flag. MUST equal core's
+// `ANTHROPIC_LOGGING_CONFIG_KEY` (src/lib/database.ts) so both realms read the
+// single authority the admin toggle writes.
+export const ANTHROPIC_LOGGING_CONFIG_KEY = "anthropic-logging";
+
+// Stateless read of the persisted logging-`enabled` authority, re-resolved via
+// the host deps slot on every call — NO connector-local module-state flag
+// (cinatra#1715 D2). Default-ENABLED: absent config / `{}` ⇒ true; only an
+// explicit `enabled === false` disables. Matches core
+// `readAnthropicLoggingEnabledFromDatabase()`.
+export function isAnthropicLoggingEnabled(): boolean {
+  const config = getAnthropicDeps().readConnectorConfigFromDatabase<{ enabled?: boolean }>(
+    ANTHROPIC_LOGGING_CONFIG_KEY,
+    {},
+  );
+  return config.enabled !== false;
+}
 
 export function getAnthropicLoggingSettings() {
   return {

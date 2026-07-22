@@ -43,6 +43,12 @@ import {
   CLAUDE_MODELS,
   type ClaudeModel,
 } from "./index";
+// Logging authority (cinatra#1715 D2, core PR #1969): the connector-local
+// request-log writer + its persisted-authority settings reader, exposed on the
+// llm-provider-surface below so the host routes anthropic logging through this
+// connector (mirroring openai/gemini).
+import { getAnthropicLoggingSettings, writeAnthropicLogFile } from "./telemetry";
+import { ANTHROPIC_API_LOG_DIRECTORY } from "./log-directory";
 
 import {
   registerAnthropicConnector,
@@ -220,6 +226,20 @@ export function register(ctx: ExtensionHostContext): void {
       saveAPISettings: (input: { apiKey: string }) => saveAnthropicAPISettings(input),
       clearAPISettings: () => clearAnthropicAPISettings(),
       models: CLAUDE_MODELS,
+      // Logging authority cutover (cinatra#1715 D2, core PR #1969): the host's
+      // packages/llm resolves the anthropic request-log writer + its settings
+      // reader through this surface (mirroring openai/gemini) instead of an
+      // in-tree copy — core's `writeLlmLogFile` routes anthropic through
+      // `writeProviderLogFile("anthropic", …)`. The writer keeps the connector's
+      // STATELESS logging-enabled gate (the persisted `anthropic-logging`
+      // connector-config key) + Bearer redaction; absence host-side degrades to
+      // a no-op. The admin WRITE path stays host-side (`saveAnthropicLoggingSettings`
+      // → the same key), so NO `saveLoggingSettings` is exposed — this connector
+      // only READS the flag.
+      getLoggingSettings: () => getAnthropicLoggingSettings(),
+      logDirectory: ANTHROPIC_API_LOG_DIRECTORY,
+      writeLogFile: (input: { label: string; kind: "request" | "response"; body: unknown }) =>
+        writeAnthropicLogFile({ label: input.label, kind: input.kind, body: input.body }),
     },
   });
 

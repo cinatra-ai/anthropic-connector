@@ -6,39 +6,33 @@
 // VALUES — value-importing them from `@cinatra-ai/sdk-extensions` over the
 // serverEntry graph is banned, exactly like the `adapter-floor` value slices.
 //
-// DIVERGENCE FLAGGED TO THE COORDINATOR (error-CONSTRUCTOR-identity duplication).
-// Each class below is defined in core `packages/llm/src/errors.ts`; inlining
-// connector-side gives the relocated adapter its own DISTINCT constructor
-// identity, so any consumer that keys on core's identity (rather than the
-// structural `.code` / `.provider` fields, which stay equal) will not recognise
-// an error thrown by the resolved connector adapter. Tiers (verified against
-// origin/main):
-//   * LIVE regression on activation: `AnthropicSkillDeliveryError` (a root export
-//     of `@cinatra-ai/llm`; base of `AnthropicFunctionToolSkillError` +
-//     `AnthropicSkillCapError`) has a real cross-package `instanceof` catch — core
-//     `packages/agents/src/agent-creation-review.ts` (lines 602 & 890, imported
-//     from `@cinatra-ai/llm`) rethrows skill-delivery sentinels by
-//     `err instanceof AnthropicSkillDeliveryError`. Once the host resolves THIS
-//     connector's adapter, that check no longer matches → the sentinel is
-//     swallowed to a warning instead of a deterministic blocker.
-//   * LATENT, duplicated ROOT export: `BatchNotSupportedError` (thrown by the
-//     adapter's batch stubs) is exported from `@cinatra-ai/llm` but has NO in-core
-//     `instanceof` catch today — no present regression, but a future/external
-//     `instanceof` would break.
-//   * LATENT, core-INTERNAL only: `NativeMcpCapabilityRequiredError` and
-//     `McpApprovalUnsupportedError` are NOT root-exported from `@cinatra-ai/llm`
-//     (defined in core, not public). Their identity is duplicated but reachable
-//     only by a future core catch or a later export.
-// No connector-only inlining can preserve another module's constructor identity.
-// Reconciling is a CORE-paired change (switch the catch sites to a structural
-// `.code`/`.provider` check, or hoist the shared error contract into the ABI
-// leaf so both sides reference one identity) and MUST land before this connector
-// revision is INSTALLED. NOTE: the fallback is install-gated, not code-gated —
-// core's resolver PREFERS a registered `llm-provider-adapter` surface, so a host
-// that loads this revision WOULD resolve this adapter and skip the in-tree copy.
-// This stage-1 artifact is unactivated only because the branch stays LOCAL /
-// uninstalled (core's in-tree copy still serves every running host). See the lane
-// divergence report (feeds stage 2).
+// ERROR IDENTITY ACROSS REALMS (cinatra#1715 D1 — RESOLVED by core PR #1969).
+// These classes are inlined connector-side, so the relocated adapter throws
+// sentinels with a DISTINCT constructor identity from core's originals. The
+// stage-1 artifact flagged this as an activation blocker (a connector-realm copy
+// fails an `err instanceof CoreClass` check the moment the host resolves this
+// adapter, swallowing a fail-loud sentinel to a warning). #1969 fixed it CORE-side
+// by replacing every live `instanceof` on these classes with STRUCTURAL
+// discriminators that key on the stable fields — `isAnthropicSkillDeliveryError`
+// (`.code` ∈ the skill-delivery code set AND `.provider === "anthropic"`),
+// `isBatchNotSupportedError` / `isNativeMcpCapabilityRequiredError` /
+// `isMcpApprovalUnsupportedError` (`.code`) — exported from `@cinatra-ai/llm`.
+// Those fields are realm-independent, so a faithful inlined copy is recognised
+// regardless of which module minted it.
+//
+// The CONTRACT this module must uphold (do NOT drift): every class keeps the
+// EXACT `.code` string core's predicate set expects, and the skill-delivery
+// subclasses keep `.provider === "anthropic"` (via the abstract base). Adding a
+// NEW skill-delivery code is a PAIRED core change — core's drift-guard contract
+// test asserts `ANTHROPIC_SKILL_DELIVERY_ERROR_CODES` equals the concrete
+// subclass `.code` set (the two skill-delivery codes below —
+// `anthropic_skill_cap_exceeded` + `anthropic_function_tool_skill_forbidden` —
+// are the pair this adapter throws; the other two codes belong to the
+// skill-DELIVERY/-sync seam that stays in core, cinatra#1964, and are not
+// inlined here). This connector never CATCHES these sentinels (it only THROWS
+// them at the provider boundary), so there is no connector-side `instanceof` to
+// convert; any future connector catch MUST use the exported predicates, never
+// `instanceof`.
 
 import type { LlmProvider } from "@cinatra-ai/sdk-extensions/llm-provider-adapter-contract";
 
