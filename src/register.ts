@@ -25,7 +25,11 @@
 // host's campaign-action call sites own the gating (the connector's own
 // settings form binds its separately manage-gated action, unchanged).
 
-import type { ExtensionHostContext, NangoSystemSurface } from "@cinatra-ai/sdk-extensions";
+import type {
+  ExtensionHostContext,
+  NangoSystemSurface,
+  LlmProviderAdapterSurface,
+} from "@cinatra-ai/sdk-extensions";
 import {
   getConfiguredAnthropicConnection,
   getDefaultClaudeModel,
@@ -39,6 +43,12 @@ import {
   CLAUDE_MODELS,
   type ClaudeModel,
 } from "./index";
+// Logging authority (cinatra#1715 D2, core PR #1969): the connector-local
+// request-log writer + its persisted-authority settings reader, exposed on the
+// llm-provider-surface below so the host routes anthropic logging through this
+// connector (mirroring openai/gemini).
+import { getAnthropicLoggingSettings, writeAnthropicLogFile } from "./telemetry";
+import { ANTHROPIC_API_LOG_DIRECTORY } from "./log-directory";
 
 import {
   registerAnthropicConnector,
@@ -46,6 +56,11 @@ import {
   type AnthropicConnectorDeps,
   type HostAnthropicSkillConfigShape,
 } from "./deps";
+// The relocated Anthropic request-translation adapter (llm-providers S4,
+// cinatra#1715). The host's packages/llm resolves this connector's
+// `createAdapter()` factory through the `llm-provider-adapter` capability
+// instead of its in-core `providers/anthropic.ts` switch.
+import { createAnthropicProviderAdapter } from "./adapter/anthropic-adapter";
 
 const PACKAGE_NAME = "@cinatra-ai/anthropic-connector";
 
@@ -211,7 +226,53 @@ export function register(ctx: ExtensionHostContext): void {
       saveAPISettings: (input: { apiKey: string }) => saveAnthropicAPISettings(input),
       clearAPISettings: () => clearAnthropicAPISettings(),
       models: CLAUDE_MODELS,
+      // Logging authority cutover (cinatra#1715 D2, core PR #1969): the host's
+      // packages/llm resolves the anthropic request-log writer + its settings
+      // reader through this surface (mirroring openai/gemini) instead of an
+      // in-tree copy — core's `writeLlmLogFile` routes anthropic through
+      // `writeProviderLogFile("anthropic", …)`. The writer keeps the connector's
+      // STATELESS logging-enabled gate (the persisted `anthropic-logging`
+      // connector-config key) + Bearer redaction; absence host-side degrades to
+      // a no-op. The admin WRITE path stays host-side (`saveAnthropicLoggingSettings`
+      // → the same key), so NO `saveLoggingSettings` is exposed — this connector
+      // only READS the flag.
+      getLoggingSettings: () => getAnthropicLoggingSettings(),
+      logDirectory: ANTHROPIC_API_LOG_DIRECTORY,
+      writeLogFile: (input: { label: string; kind: "request" | "response"; body: unknown }) =>
+        writeAnthropicLogFile({ label: input.label, kind: input.kind, body: input.body }),
     },
+  });
+
+  // ---- llm-provider-adapter surface (llm-providers S4, cinatra#1715) ----
+  //
+  // The full Anthropic request-translation adapter now lives IN this connector
+  // (relocated from the host's packages/llm `providers/anthropic.ts`). The host's
+  // packages/llm resolves the adapter through this NEW versioned
+  // `llm-provider-adapter` capability instead of its in-core factory switch:
+  // once a trusted surface is registered the host calls `createAdapter()` and
+  // does NOT fall back to the legacy in-core factory (the host fails CLOSED on
+  // an abiVersion it does not recognise). `createAdapter()` resolves the
+  // connector-owned connection internally and returns null when the connector is
+  // present-but-unconfigured — an AUTHORITATIVE "not configured" (the registry's
+  // existing null-adapter semantics; no new error class). Registration does no
+  // host I/O (probe-safe). The capability-id is a string literal because it stays
+  // host-fenced in the SDK (`./internal`), exactly like the S1 surface above.
+  ctx.capabilities.registerProvider("llm-provider-adapter", {
+    packageName: PACKAGE_NAME,
+    impl: {
+      // ABI v1 is inlined as a literal (NOT value-imported from the host-peer
+      // SDK — the host-peer-value-import ban keeps @cinatra-ai/sdk-extensions
+      // TYPE-only over the serverEntry graph). The `satisfies
+      // LlmProviderAdapterSurface` below type-checks this literal against the
+      // leaf's `typeof LLM_PROVIDER_ADAPTER_ABI_VERSION`, so an ABI bump breaks
+      // the build here rather than drifting silently.
+      abiVersion: 1,
+      providerId: "anthropic",
+      createAdapter: async () => {
+        const connection = await getConfiguredAnthropicConnection();
+        return connection ? createAnthropicProviderAdapter(connection) : null;
+      },
+    } satisfies LlmProviderAdapterSurface,
   });
 
   // ---- schema-config named actions (cinatra#782) ----
