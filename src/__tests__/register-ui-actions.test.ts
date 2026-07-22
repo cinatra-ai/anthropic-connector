@@ -82,6 +82,30 @@ function actionById(uiActions: UiAction[], id: string): UiAction {
 // probe reaches isNangoConfigured() through the real activation path.
 const NANGO_SYSTEM = { isNangoConfigured: () => true };
 
+// The host services `currentConfig`'s connection-mode hydration reads
+// (cinatra#1926): connector-config (persisted mode) + runtime-mode
+// (localCliEligible). `store` seeds the persisted connection-mode row; `eligible`
+// drives the resolved-transport fallback.
+function connectionModeServices(opts: { store?: Record<string, unknown>; eligible?: boolean } = {}) {
+  const store = opts.store ?? {};
+  return {
+    "@cinatra-ai/host:connector-config": {
+      read: <T,>(connectorId: string, fallback: T): T =>
+        connectorId in store ? (store[connectorId] as T) : fallback,
+      write: (connectorId: string, value: unknown) => {
+        store[connectorId] = value;
+      },
+      delete: (connectorId: string) => {
+        delete store[connectorId];
+      },
+    },
+    "@cinatra-ai/host:runtime-mode": {
+      isDevelopment: () => opts.eligible ?? false,
+      localCliEligible: () => opts.eligible ?? false,
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   _resetAnthropicDepsForTests();
@@ -102,6 +126,7 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
         "connectionStatus",
         "currentConfig",
         "saveConnection",
+        "saveConnectionMode",
         "skillsCapabilityReady",
         "saveSkills",
         "helpContentReady",
@@ -151,28 +176,53 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     expect(mocks.getPersistedDefaultClaudeModel).not.toHaveBeenCalled();
   });
 
-  it("currentConfig returns the persisted model (manage-gated) and NEVER an apiKey", async () => {
+  it("currentConfig returns the persisted model + resolved connection mode (manage-gated) and NEVER an apiKey", async () => {
     const require = vi.fn(async () => {});
     mocks.getPersistedDefaultClaudeModel.mockReturnValue("claude-opus-4-7");
     const { ctx, uiActions } = makeCtx({
       "@cinatra-ai/host:extension-action-guard": { require },
+      ...connectionModeServices(),
     });
     register(ctx);
     const out = (await actionById(uiActions, "currentConfig").handler({})) as Record<string, string>;
     expect(require).toHaveBeenCalledWith("@cinatra-ai/anthropic-connector", "manage");
-    expect(out).toEqual({ defaultModel: "claude-opus-4-7" });
+    // connectionMode hydrates to the resolved transport (no persisted mode → api).
+    expect(out).toEqual({ defaultModel: "claude-opus-4-7", connectionMode: "api" });
     expect(out).not.toHaveProperty("apiKey");
   });
 
-  it("currentConfig hydrates NOTHING when no model is persisted or the stored value is unknown", async () => {
+  it("currentConfig hydrates the resolved transport as localCli only when persisted AND eligible (AC4 transition)", async () => {
+    // Isolate connectionMode: no model persisted (clearAllMocks keeps a prior
+    // mockReturnValue, so set it explicitly here).
+    mocks.getPersistedDefaultClaudeModel.mockReturnValue(undefined);
     const { ctx, uiActions } = makeCtx({
       "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+      ...connectionModeServices({ store: { "anthropic-connection-mode": { mode: "localCli" } }, eligible: true }),
+    });
+    register(ctx);
+    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({ connectionMode: "localCli" });
+
+    // Same persisted localCli, but the install has dropped out of dev/preview:
+    // the resolved transport (and the pre-fill) falls back to api.
+    _resetAnthropicDepsForTests();
+    const ineligible = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+      ...connectionModeServices({ store: { "anthropic-connection-mode": { mode: "localCli" } }, eligible: false }),
+    });
+    register(ineligible.ctx);
+    expect(await actionById(ineligible.uiActions, "currentConfig").handler({})).toEqual({ connectionMode: "api" });
+  });
+
+  it("currentConfig omits the model but still hydrates connectionMode when no model is persisted or the stored value is unknown", async () => {
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+      ...connectionModeServices(),
     });
     register(ctx);
     mocks.getPersistedDefaultClaudeModel.mockReturnValue(undefined);
-    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({});
+    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({ connectionMode: "api" });
     mocks.getPersistedDefaultClaudeModel.mockReturnValue("claude-retired-model");
-    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({});
+    expect(await actionById(uiActions, "currentConfig").handler({})).toEqual({ connectionMode: "api" });
   });
 
   it("saveConnection FAILS CLOSED when the action-guard service is missing (no write runs)", async () => {
@@ -273,6 +323,51 @@ describe("anthropic-connector register(ctx) — schema-config named actions", ()
     expect(require).toHaveBeenCalledWith("@cinatra-ai/anthropic-connector", "manage");
     expect(mocks.clearAnthropicAPISettings).toHaveBeenCalledOnce();
     expect(r).toEqual({ banner: "cleared" });
+  });
+
+  // ---- Connection tab (cinatra#1926) ----
+
+  it("saveConnectionMode FAILS CLOSED when the action-guard service is missing (no write runs)", async () => {
+    const { ctx, uiActions } = makeCtx(connectionModeServices({ eligible: true })); // no guard
+    register(ctx);
+    await expect(
+      actionById(uiActions, "saveConnectionMode").handler({ connectionMode: "localCli" }),
+    ).rejects.toThrow(/action-guard service is not registered/);
+  });
+
+  it("saveConnectionMode persists a chosen mode after the manage gate (eligible)", async () => {
+    const store: Record<string, unknown> = {};
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+      ...connectionModeServices({ store, eligible: true }),
+    });
+    register(ctx);
+    const r = await actionById(uiActions, "saveConnectionMode").handler({ connectionMode: "localCli" });
+    expect(r).toEqual({ banner: "connectionSaved" });
+    expect(store["anthropic-connection-mode"]).toEqual({ mode: "localCli" });
+  });
+
+  it("saveConnectionMode REJECTS a forged localCli write on an INELIGIBLE install (server-side gate, DOM strip bypassed)", async () => {
+    const store: Record<string, unknown> = {};
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+      ...connectionModeServices({ store, eligible: false }),
+    });
+    register(ctx);
+    const r = await actionById(uiActions, "saveConnectionMode").handler({ connectionMode: "localCli" });
+    expect(r).toEqual({ banner: "error" });
+    expect(store["anthropic-connection-mode"]).toBeUndefined();
+  });
+
+  it("saveConnectionMode persists a deliberate localCli → api switch (no no-loss trap)", async () => {
+    const store: Record<string, unknown> = { "anthropic-connection-mode": { mode: "localCli" } };
+    const { ctx, uiActions } = makeCtx({
+      "@cinatra-ai/host:extension-action-guard": { require: vi.fn(async () => {}) },
+      ...connectionModeServices({ store, eligible: true }),
+    });
+    register(ctx);
+    await actionById(uiActions, "saveConnectionMode").handler({ connectionMode: "api" });
+    expect(store["anthropic-connection-mode"]).toEqual({ mode: "api" });
   });
 
   // ---- Skills tab (cinatra-ai/cinatra#44) ----

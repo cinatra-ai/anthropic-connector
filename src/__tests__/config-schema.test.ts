@@ -187,12 +187,61 @@ describe("anthropic-connector cinatra.configSchema", () => {
     });
   });
 
-  describe("tabs — Skills + Help (cinatra-ai/cinatra#44)", () => {
+  describe("tabs — Connection + Skills + Help", () => {
     const tabs = (configSchema as { tabs?: Array<Record<string, unknown>> }).tabs ?? [];
     const byId = (id: string) => tabs.find((t) => t.id === id);
 
-    it("declares exactly the Skills and Help tabs", () => {
-      expect(tabs.map((t) => t.id)).toEqual(["skills", "help"]);
+    it("declares exactly the Connection, Skills and Help tabs (Help last)", () => {
+      expect(tabs.map((t) => t.id)).toEqual(["connection", "skills", "help"]);
+    });
+
+    it("Connection tab (cinatra#1926) carries the API-vs-Local-CLI selector with the local-CLI option dev/preview-gated", () => {
+      const connection = byId("connection");
+      expect(connection).toBeDefined();
+      const fields = connection!.fields as Array<Record<string, unknown>>;
+      const select = fields.find((f) => f.kind === "select" && f.key === "connectionMode");
+      expect(select).toBeDefined();
+      expect(select?.defaultValue).toBe("api");
+      const options = select!.options as Array<{ value: string; devPreviewOnly?: boolean }>;
+      expect(options.map((o) => o.value)).toEqual(["api", "localCli"]);
+      // API is ungated; Local CLI is the dev/preview-gated option the host strips
+      // server-side outside dev/preview.
+      expect(options.find((o) => o.value === "api")?.devPreviewOnly).toBeUndefined();
+      expect(options.find((o) => o.value === "localCli")?.devPreviewOnly).toBe(true);
+    });
+
+    it("Connection tab is self-contained: its own save (saveConnectionMode) + result banner", () => {
+      const connection = byId("connection");
+      const fields = connection!.fields as Array<Record<string, unknown>>;
+      const save = fields.find((f) => f.kind === "named-action");
+      expect(save?.actionId).toBe("saveConnectionMode");
+      const banner = fields.find((f) => f.kind === "banner");
+      expect(banner).toBeDefined();
+      const variants = (banner!.variants as Array<{ name: string }>).map((v) => v.name);
+      expect(variants).toContain("connectionSaved");
+      expect(variants).toContain("error");
+    });
+
+    it("introduces no @chatgpt token on the Connection surface (ruling M2 / AC5)", () => {
+      const connection = byId("connection");
+      expect(JSON.stringify(connection)).not.toContain("@chatgpt");
+    });
+
+    it("the gate REJECTS a non-boolean devPreviewOnly on a select option (security flag fails closed — cinatra#1926)", () => {
+      const bad = {
+        fields: [
+          {
+            kind: "select",
+            key: "connectionMode",
+            label: "Connect via",
+            options: [
+              { value: "api", label: "API" },
+              { value: "localCli", label: "Local CLI", devPreviewOnly: "true" },
+            ],
+          },
+        ],
+      };
+      expect(validateConfigSchema(bad).length).toBeGreaterThan(0);
     });
 
     it("Skills tab carries the sync-enabled toggle, a capability-gated advisory, and its own save + banner", () => {

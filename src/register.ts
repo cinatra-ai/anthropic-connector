@@ -56,6 +56,15 @@ import {
   type AnthropicConnectorDeps,
   type HostAnthropicSkillConfigShape,
 } from "./deps";
+// Connection-mode (API vs local CLI) selector persistence + transport resolution
+// (cinatra#1926). The gated `localCli` option is stripped server-side by the host
+// setup route when ineligible; these handlers add the WRITE-side rejection +
+// hydration, all consuming the same host `localCliEligible` predicate.
+import {
+  decideConnectionModeWrite,
+  getResolvedConnectionTransport,
+  saveConnectionMode,
+} from "./connection-mode";
 // The relocated Anthropic request-translation adapter (llm-providers S4,
 // cinatra#1715). The host's packages/llm resolves this connector's
 // `createAdapter()` factory through the `llm-provider-adapter` capability
@@ -90,7 +99,14 @@ type HostConnectorConfigShape = {
 type HostAnthropicConnectionShape = {
   readRowFromDatabase: AnthropicConnectorDeps["readAnthropicConnectionFromDatabase"];
 };
-type HostRuntimeModeShape = { isDevelopment(): boolean };
+// cinatra#1926: the runtime-mode service ALSO carries the single local-CLI
+// eligibility predicate. `localCliEligible` is OPTIONAL in this structural shape
+// so the binding stays fail-closed against a host that predates it (a missing
+// member ⇒ the local-CLI mode stays hidden / write-rejected / API-only).
+type HostRuntimeModeShape = {
+  isDevelopment(): boolean;
+  localCliEligible?(): boolean;
+};
 
 /** The host-published action-guard service (value, NOT the SDK
  *  `requireExtensionAction` import — a runtime serverEntry graph rejects SDK
@@ -162,6 +178,9 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): AnthropicConnectorDeps {
     deleteConnectorConfigFromDatabase: (connectorId) => config().delete(connectorId),
     readAnthropicConnectionFromDatabase: () => connection().readRowFromDatabase(),
     isAppDevelopmentMode: () => runtimeMode().isDevelopment(),
+    // cinatra#1926: consume the host's single localCliEligible predicate. Optional
+    // chaining + `=== true` fail closed (a host without the member ⇒ ineligible).
+    localCliEligible: () => runtimeMode().localCliEligible?.() === true,
     // Nango connection-storage members delegate to the connector-authored
     // nango-system surface at CALL time (key maps are getters for the same
     // reason). Inputs are cast at this boundary: the surface owns the real
@@ -350,6 +369,11 @@ export function register(ctx: ExtensionHostContext): void {
       if (model && (CLAUDE_MODELS as readonly string[]).includes(model)) {
         out.defaultModel = model;
       }
+      // Connection mode (cinatra#1926): hydrate the RESOLVED transport, not the
+      // raw persisted value — so an ineligible installation (where the server
+      // stripped the `localCli` option) pre-fills `api`, never a now-absent
+      // option. Eligible + persisted `localCli` pre-fills `localCli`.
+      out.connectionMode = getResolvedConnectionTransport();
       return out;
     },
   });
@@ -398,6 +422,34 @@ export function register(ctx: ExtensionHostContext): void {
       await requireManage();
       await clearAnthropicAPISettings();
       return { banner: "cleared" };
+    },
+  });
+
+  // ---- Connection tab (cinatra#1926) ----
+  //
+  // WRITE (manage-gated): persist the API-vs-local-CLI connection mode. This is
+  // the Connection tab's OWN save (mirrors the Skills tab's saveSkills), so the
+  // selector is self-contained and saveable. SERVER-SIDE enforcement via the
+  // pure `decideConnectionModeWrite` policy: a forged write selecting `localCli`
+  // on an ineligible installation is REJECTED (defense in depth over the option
+  // being stripped from the rendered DOM), consuming the SAME host
+  // `localCliEligible` predicate the setup route uses — never a client value.
+  ctx.ui.registerAction({
+    id: "saveConnectionMode",
+    handler: async (input: unknown): Promise<{ banner: string }> => {
+      await requireManage();
+      const fields =
+        input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+      const decision = decideConnectionModeWrite(fields.connectionMode, {
+        localCliEligible: getAnthropicDeps().localCliEligible(),
+      });
+      if (!decision.ok) {
+        return { banner: "error" };
+      }
+      if (decision.persist) {
+        saveConnectionMode(decision.persist);
+      }
+      return { banner: "connectionSaved" };
     },
   });
 
