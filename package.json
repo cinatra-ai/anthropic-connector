@@ -21,6 +21,7 @@
     "lint": "eslint . --no-inline-config"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "radix-ui": "^1.4.3",
