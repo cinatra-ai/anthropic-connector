@@ -7,6 +7,22 @@ import { getAnthropicDeps } from "./deps";
 // still shadow a "cleared" connection — so clear/save purge it physically.
 const ANTHROPIC_LEGACY_CONNECTION_ROW = "anthropic_connection";
 
+// Nango's `anthropic` provider template declares a REQUIRED `connection_config`
+// field `version` and interpolates it into the proxy header
+// `anthropic-version: ${connectionConfig.version}`. That header is also what its
+// credential VERIFICATION request (`GET v1/models`) sends, so importing a
+// connection without it makes Nango issue a request with an empty
+// `anthropic-version` header — Anthropic rejects it and Nango fails the import
+// with `connection_test_failed` ("The given credentials were found to be
+// invalid"), even for a perfectly valid key. Every save through this connector's
+// setup form therefore failed on a Nango carrying that template.
+//
+// Pin the stable Anthropic API version the platform targets and pass it as the
+// connection config on import. Value must match the template's
+// `^[0-9]{4}-[0-9]{2}-[0-9]{2}$` pattern; `2023-06-01` is Anthropic's current
+// stable Messages API version (the same one the SDK sends by default).
+export const ANTHROPIC_NANGO_API_VERSION = "2023-06-01";
+
 // Shared extractor that accepts both the `{ apiKey: string }` object shape and
 // the raw-string fallback shape that `getCredentials` can return, so the
 // readback compare and the credential read are consistent across call sites.
@@ -269,6 +285,11 @@ export async function saveAnthropicAPISettings(input: {
     providerConfigKey,
     connectionId,
     credentials: { type: "API_KEY", apiKey: trimmedInput },
+    // REQUIRED by Nango's `anthropic` template (see
+    // ANTHROPIC_NANGO_API_VERSION): without it the import's own credential
+    // verification sends an empty `anthropic-version` header and Nango rejects
+    // a valid key with `connection_test_failed`.
+    connectionConfig: { version: ANTHROPIC_NANGO_API_VERSION },
   });
 
   let readbackKey: string | null = null;

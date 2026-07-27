@@ -17,6 +17,7 @@ import {
   getAnthropicSkillSyncCapabilityReady,
   getAnthropicSkillSyncEnabled,
   saveAnthropicSkillSyncEnabled,
+  ANTHROPIC_NANGO_API_VERSION,
 } from "../index";
 import {
   registerAnthropicConnector,
@@ -149,6 +150,12 @@ describe("saveAnthropicAPISettings — verify-before-persist (finding 1)", () =>
     const importArg = nango.importConnection.mock.calls[0][0];
     expect("connectorKey" in importArg).toBe(false);
     expect(importArg.credentials).toEqual({ type: "API_KEY", apiKey: "sk-new" });
+    // Nango's `anthropic` template REQUIRES connection_config.version — it is
+    // interpolated into the `anthropic-version` header the import's own
+    // credential verification sends. Omitting it makes Nango reject a VALID key
+    // with `connection_test_failed`, so the save path must always pass it.
+    expect(importArg.connectionConfig).toEqual({ version: ANTHROPIC_NANGO_API_VERSION });
+    expect(ANTHROPIC_NANGO_API_VERSION).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
 
     expect(nango.getCredentials).toHaveBeenCalledWith(PCK, CID, { forceRefresh: true });
     expect(nango.saveConnectionRecord).toHaveBeenCalledWith(

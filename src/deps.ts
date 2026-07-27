@@ -55,6 +55,11 @@ export interface AnthropicNangoCapability {
     connectionId: string;
     credentials: { type: string; apiKey: string };
     metadata?: Record<string, unknown>;
+    /** Provider-template connection config. Nango's `anthropic` template
+     *  REQUIRES `version` (it interpolates it into the `anthropic-version`
+     *  proxy header its credential verification also sends), so the save path
+     *  always passes it — see ANTHROPIC_NANGO_API_VERSION in index.ts. */
+    connectionConfig?: Record<string, unknown>;
   }): Promise<unknown>;
   /** Persist the cinatra-side pointer row AFTER a verified readback.
    *  `{ multiple: false }` enforces a single workspace-wide credential. The
