@@ -64,6 +64,26 @@
     ],
     "sdkAbiRange": "^2",
     "providerConfigKey": "cinatra-anthropic",
+    "llmProvider": {
+      "abiVersion": 2,
+      "provider": "anthropic",
+      "capabilities": {
+        "function_tools": true,
+        "media_input": false,
+        "native_mcp": { "status": "native", "approval": "unsupported" }
+      },
+      "models": {
+        "default": "claude-sonnet-4-6",
+        "allowed": [
+          "claude-sonnet-4-6",
+          "claude-opus-4-7",
+          "claude-3-7-sonnet-latest",
+          "claude-3-5-haiku-latest"
+        ]
+      },
+      "defaultCapable": true,
+      "wizardEligible": true
+    },
     "uiSurface": "schema-config",
     "configSchema": {
       "title": "Anthropic",

@@ -48,6 +48,8 @@ import {
 // llm-provider-surface below so the host routes anthropic logging through this
 // connector (mirroring openai/gemini).
 import { getAnthropicLoggingSettings, writeAnthropicLogFile } from "./telemetry";
+// cinatra.llmProvider ABI v2 native-skills probe (cinatra-ai/cinatra#2093).
+import { probeNativeSkills } from "./native-skills-probe";
 import { ANTHROPIC_API_LOG_DIRECTORY } from "./log-directory";
 
 import {
@@ -218,6 +220,22 @@ export function register(ctx: ExtensionHostContext): void {
     impl: {
       providerId: "anthropic",
       getConfiguredConnection: () => getConfiguredAnthropicConnection(),
+      // cinatra-ai/cinatra#2093 (epic #2086 S6): the host's setup readiness
+      // saga asks the surface — not a stored boolean — whether the connection
+      // is usable. A key alone is not readiness; `getConfiguredAnthropicConnection`
+      // already encodes the Nango-pointer + verified-credential gate, so the
+      // presence of a resolved connection IS the honest answer.
+      isConnectionReady: (connection?: unknown) =>
+        typeof (connection as { apiKey?: unknown } | null | undefined)?.apiKey === "string" &&
+        ((connection as { apiKey: string }).apiKey.trim().length > 0),
+      getConfiguredAPIKey: async () => (await getConfiguredAnthropicConnection())?.apiKey ?? null,
+      // ABI v2 NATIVE-SKILLS PROBE. Issues a REAL container.skills request
+      // against the stored connection so setup can prove skills actually reach
+      // Claude on THIS instance — the one thing a manifest declaration cannot
+      // state (a `function-tools` mcpMode declares native_mcp "native" and
+      // still rejects every container.skills request).
+      probeNativeSkills: (input: { skillId: string; version: string; timeoutMs?: number }) =>
+        probeNativeSkills(input),
       getDefaultModel: () => getDefaultClaudeModel(),
       // The host validates against `models` before calling (its previous
       // CLAUDE_MODELS.includes(...) check); the cast is the same narrowing the
