@@ -54,6 +54,38 @@ export class BatchNotSupportedError extends Error {
   }
 }
 
+/**
+ * Thrown by the batch-v2 `download` when per-request outcomes are asked for
+ * before the batch reached a state that HAS them (cinatra#2396).
+ *
+ * Connector-realm copy of core's `BatchResultsNotReadyError` — same discipline
+ * as `BatchNotSupportedError` above: the `.code` string is the CONTRACT, and
+ * core's cross-realm `isBatchResultsNotReadyError` predicate keys on it, so a
+ * connector-minted instance is recognised despite the distinct constructor
+ * identity. Do NOT drift `"batch_results_not_ready"`.
+ *
+ * Anthropic's results stream simply does not exist until `processing_status`
+ * is `ended` (there is no `results_url` before that), so this is the honest
+ * sentinel for a caller polling too early — never an empty array, which a
+ * consumer cannot distinguish from "the batch ended and produced nothing".
+ */
+export class BatchResultsNotReadyError extends Error {
+  readonly code = "batch_results_not_ready" as const;
+  readonly provider: LlmProvider;
+  readonly batchId: string;
+  readonly status: string;
+
+  constructor(provider: LlmProvider, batchId: string, status: string) {
+    super(
+      `Batch "${batchId}" on provider "${provider}" has no per-request results yet (status: ${status})`,
+    );
+    this.name = "BatchResultsNotReadyError";
+    this.provider = provider;
+    this.batchId = batchId;
+    this.status = status;
+  }
+}
+
 export abstract class AnthropicSkillDeliveryError extends Error {
   abstract readonly code: string;
   readonly provider = "anthropic" as const;

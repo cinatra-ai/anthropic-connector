@@ -28,6 +28,10 @@ import type {
   UploadFileInput,
   LlmFileReference,
   LlmSandboxExecutionTool,
+  LlmBatchV2SubmitInput,
+  LlmBatchV2SubmitResult,
+  LlmBatchV2State,
+  LlmBatchV2Outcome,
 } from "@cinatra-ai/sdk-extensions/llm-provider-adapter-contract";
 // Guarded native attachment emission.
 import {
@@ -36,8 +40,16 @@ import {
   resolvedAttachmentsPerMessage,
 } from "./adapter-floor";
 import { writeAnthropicLogFile } from "../telemetry";
+// Batch-v2 (cinatra#2396): the pure Message-Batches ⟷ neutral-contract mappers.
+import {
+  toAnthropicBatchRequest,
+  toNeutralBatchState,
+  toNeutralBatchStatus,
+  toNeutralOutcome,
+} from "./anthropic-batch-v2";
 import {
   BatchNotSupportedError,
+  BatchResultsNotReadyError,
   AnthropicFunctionToolSkillError,
   NativeMcpCapabilityRequiredError,
   McpApprovalUnsupportedError,
@@ -1390,13 +1402,82 @@ export function createAnthropicProviderAdapter(config: AnthropicConnectionConfig
       return models.sort((a, b) => a.localeCompare(b));
     },
     // -----------------------------------------------------------------------
-    // Batch API stubs: Anthropic does NOT support OpenAI-style
-    // /v1/chat/completions batching. Throw rather than return null so callers
-    // see the gap explicitly.
+    // Batch API v1 stubs — UNCHANGED (cinatra#2396).
+    //
+    // v1 is OpenAI-canonical (JSONL input FILE, `/v1/chat/completions` bodies,
+    // OpenAI status strings, results by FILE id). Anthropic implements none of
+    // that, so these keep throwing exactly as shipped. They are deliberately
+    // NOT re-pointed at Message Batches: doing so would silently accept
+    // OpenAI-shaped bodies this provider cannot execute. The neutral surface
+    // below is the migration path, and core prefers it whenever it is present.
     // -----------------------------------------------------------------------
     async submitBatch() { throw new BatchNotSupportedError("anthropic"); },
     async retrieveBatch() { throw new BatchNotSupportedError("anthropic"); },
     async downloadBatchResults() { throw new BatchNotSupportedError("anthropic"); },
     async cancelBatch() { throw new BatchNotSupportedError("anthropic"); },
+
+    // -----------------------------------------------------------------------
+    // Batch API v2 — the provider-NEUTRAL surface, over Message Batches.
+    //
+    // `version: 2 as const` is written literally rather than value-imported
+    // from the SDK leaf: under old-host/new-connector skew the host-resolved
+    // `@cinatra-ai/sdk-extensions` may predate the constant, and a runtime
+    // import would fail to resolve. The TYPE still pins it (the surface is
+    // typed `LlmBatchV2Surface`), so drift is a compile error.
+    //
+    // No file ids anywhere on this path: submit is INLINE, results are read by
+    // BATCH id, and both outcome streams arrive in the one results stream.
+    // -----------------------------------------------------------------------
+    batchV2: {
+      version: 2 as const,
+
+      async submit(input: LlmBatchV2SubmitInput): Promise<LlmBatchV2SubmitResult> {
+        // `input.metadata` is intentionally dropped: Message Batches has no
+        // metadata slot, and the contract documents metadata as best-effort.
+        // Silently inventing a place to stash it (a system-prompt preamble, a
+        // custom_id prefix) would corrupt the request the caller described.
+        const requests = input.requests.map((request) =>
+          toAnthropicBatchRequest(request, model),
+        );
+        await writeAnthropicLogFile({
+          label: "anthropic-batch-submit",
+          kind: "request",
+          body: { request_count: requests.length },
+        });
+        const batch = await client.messages.batches.create({ requests });
+        return {
+          batchId: batch.id,
+          status: toNeutralBatchStatus(batch.processing_status),
+        };
+      },
+
+      async retrieve(batchId: string): Promise<LlmBatchV2State> {
+        return toNeutralBatchState(await client.messages.batches.retrieve(batchId));
+      },
+
+      async download(batchId: string): Promise<LlmBatchV2Outcome[]> {
+        // Retrieve FIRST. `results()` is only valid once processing ended (the
+        // batch carries no `results_url` before that), and a caller asking too
+        // early deserves the recognisable "not ready" sentinel rather than the
+        // SDK's own 404 — or, worse, an empty array indistinguishable from "the
+        // batch ended and produced nothing".
+        const batch = await client.messages.batches.retrieve(batchId);
+        const status = toNeutralBatchStatus(batch.processing_status);
+        if (status !== "ended") {
+          throw new BatchResultsNotReadyError("anthropic", batchId, status);
+        }
+        const outcomes: LlmBatchV2Outcome[] = [];
+        // The results stream is a JSONL decoder — async-iterated, never buffered
+        // as one string, so a large batch does not have to fit in memory twice.
+        for await (const row of await client.messages.batches.results(batchId)) {
+          outcomes.push(toNeutralOutcome(row));
+        }
+        return outcomes;
+      },
+
+      async cancel(batchId: string): Promise<LlmBatchV2State> {
+        return toNeutralBatchState(await client.messages.batches.cancel(batchId));
+      },
+    },
   };
 }
