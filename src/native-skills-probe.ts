@@ -8,11 +8,14 @@
  * WHY A DECLARATION CANNOT ANSWER IT. This connector declares
  * `native_mcp.status: "native"` — a true statement about the connector's
  * capability. But whether skills reach the model depends on the STORED
- * `mcpMode`, which defaults to `"function-tools"`. In that mode the connector
- * reports ready on key presence, passes every declaration check, and then
+ * `mcpMode`: an admin who explicitly saved `"function-tools"` gets a connector
+ * that reports ready on key presence, passes every declaration check, and then
  * refuses every `container.skills` request. Setup would complete
  * "successfully" while skills silently never reached Claude. Only a real
  * request with a real, already-uploaded skill id tells the two apart.
+ * (An UNSET mode resolves to `"native"` in both this probe and the adapter —
+ * cinatra#2776 item 3(e) aligned the two defaults, so the probe can no longer
+ * refuse for a mode the dispatch path would not have used.)
  *
  * WHY IT MUST NOT FALL BACK. Emulating skills through function tools would make
  * the probe pass in exactly the broken configuration it exists to detect — the
