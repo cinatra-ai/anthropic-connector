@@ -123,9 +123,23 @@ export function getPersistedDefaultClaudeModel(): ClaudeModel | undefined {
   return readSettings().defaultModel;
 }
 
+/**
+ * The EFFECTIVE MCP mode for an unset setting must match what the adapter
+ * actually dispatches with (cinatra#2776 item 3(e)).
+ *
+ * `getConfiguredAnthropicConnection()` OMITS `mcpMode` when nothing is stored,
+ * so `createAnthropicProviderAdapter` receives `undefined` and resolves its own
+ * default — `"native"` (anthropic-adapter.ts). This reader used to report
+ * `"function-tools"` for the same unset setting, so readiness/probe answered
+ * for a mode the dispatch path never took: the native-skills probe refused
+ * before egress ("this connection's MCP mode is function-tools") on a
+ * connection that would in fact have issued a perfectly good native
+ * `container.skills` request. Reporting `"native"` here makes the two agree.
+ * An explicitly SAVED `"function-tools"` is still honoured verbatim.
+ */
 export function getMcpMode(): "native" | "function-tools" {
   const settings = readSettings();
-  return settings.mcpMode ?? "function-tools";
+  return settings.mcpMode ?? "native";
 }
 
 export function saveMcpMode(mode: "native" | "function-tools") {

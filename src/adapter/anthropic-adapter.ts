@@ -164,6 +164,63 @@ function isMcpServerTool(tool: LlmTool): tool is LlmMcpServerTool {
   return "type" in tool && tool.type === "mcp";
 }
 
+/** The capability value that pins a request to genuine native MCP. */
+const NATIVE_MCP_CAPABILITY = "native_mcp";
+
+/**
+ * cinatra#2776 item 3 — read `capabilityRequired` off ANY adapter input
+ * defensively.
+ *
+ * `GenerateInput` has carried the field since #1712; `StreamInput` gains it in
+ * the HOST phase of #2776. This connector is pinned by sha and must run against
+ * BOTH an old host (no field on `StreamInput`) and the new one, so the value is
+ * read through a widening cast rather than off the declared type. Reading it
+ * this way is behavior-identical on a host that does declare it, and yields
+ * `undefined` — the pre-existing "no requirement" case — on one that does not.
+ */
+function readCapabilityRequired(input: unknown): string | undefined {
+  const value = (input as { capabilityRequired?: unknown } | null | undefined)
+    ?.capabilityRequired;
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * cinatra#2776 item 3(a)(b) — the UNIVERSAL native-MCP requirement guard.
+ *
+ * Owner ruling (2026-08-15): the chat and widget runtimes always declare
+ * `capabilityRequired: "native_mcp"` for the self-MCP toolbox, and Anthropic's
+ * `function-tools` mode is a HARD REFUSAL there — function-tool emulation is not
+ * native MCP (the MCP Injection Rule), so flattening the self-MCP catalog into
+ * inline `input_schema` tools must never happen under that requirement.
+ *
+ * Two properties this helper exists to guarantee:
+ *   1. It is called from BOTH `generate()` and `stream()` — the stream path had
+ *      NO check at all before #2776 and reached `fetchMcpToolsAsLlmFunctionTools`
+ *      directly (the credential-bearing `tools/list` egress).
+ *   2. It is UNIVERSAL whenever an MCP server tool is present: the previous
+ *      generate-side guard excluded container-skills requests
+ *      (`!hasContainerSkills`), which made a built-in chat assistant fail on the
+ *      container-skills error instead of the ruled `native_mcp` refusal —
+ *      fail-closed by accident, and no cover at all for a skill-less stream.
+ *      The `native_mcp` refusal now takes precedence over the container-skills
+ *      refusal, so the error class is the same on every surface.
+ *
+ * MUST be called BEFORE any MCP `tools/list` fetch or provider request.
+ */
+function assertNativeMcpCapabilitySatisfiable(args: {
+  capabilityRequired: string | undefined;
+  mcpMode: "native" | "function-tools";
+  mcpServerToolCount: number;
+}): void {
+  if (
+    args.capabilityRequired === NATIVE_MCP_CAPABILITY &&
+    args.mcpMode === "function-tools" &&
+    args.mcpServerToolCount > 0
+  ) {
+    throw new NativeMcpCapabilityRequiredError("anthropic");
+  }
+}
+
 /**
  * llm-providers S2 (#1713, AC2) — approval-vocabulary fail-closed refusal.
  * Anthropic's declared `approval` capability is "unsupported": neither the
@@ -462,25 +519,29 @@ export function createAnthropicProviderAdapter(config: AnthropicConnectionConfig
 
       let effectiveTools = nonMcpTools ?? [];
 
-      // llm-providers S1 (#1712) — native_mcp fail-closed hardening (AC3).
+      // llm-providers S1 (#1712) — native_mcp fail-closed hardening (AC3),
+      // made UNIVERSAL by cinatra#2776 item 3(b).
       // MUST precede the function-tools MCP fetch below: when the request pins
       // `capabilityRequired: "native_mcp"` and MCP server tools are present but
       // the connector is CONFIGURED for function-tools mode, there is no native
       // MCP path to take. Silently emulating MCP with function tools does NOT
       // satisfy native_mcp (the MCP Injection Rule) — so refuse BEFORE issuing
       // the credential-bearing `tools/list` request that would begin the
-      // prohibited degradation. Excludes the container-skills case so it keeps
-      // its existing precedence (the `AnthropicFunctionToolSkillError` guard
-      // below). No effect when native_mcp is not required (the default) or when
-      // no MCP tools are present — behavior-identical.
-      if (
-        input.capabilityRequired === "native_mcp" &&
-        mcpMode === "function-tools" &&
-        mcpServerTools.length > 0 &&
-        !hasContainerSkills
-      ) {
-        throw new NativeMcpCapabilityRequiredError("anthropic");
-      }
+      // prohibited degradation.
+      //
+      // #2776: the container-skills exclusion (`!hasContainerSkills`) is GONE.
+      // Built-in chat assistants normally carry container skills, so the
+      // exclusion made those requests die on `AnthropicFunctionToolSkillError`
+      // instead of the ruled `native_mcp_capability_required` — a different
+      // error class for the same prohibited configuration. The native_mcp
+      // refusal now takes precedence over the container-skills refusal below.
+      // No effect when native_mcp is not required (the default) or when no MCP
+      // tools are present — behavior-identical.
+      assertNativeMcpCapabilitySatisfiable({
+        capabilityRequired: readCapabilityRequired(input),
+        mcpMode,
+        mcpServerToolCount: mcpServerTools.length,
+      });
 
       if (mcpServerTool && mcpMode === "function-tools") {
         const mcpFunctionTools = await fetchMcpToolsAsLlmFunctionTools(mcpServerTool);
@@ -641,7 +702,7 @@ export function createAnthropicProviderAdapter(config: AnthropicConnectionConfig
             // capability contract (function-tool emulation is not native MCP).
             // Fail closed instead. No effect when native_mcp is not required
             // (the default) — the existing fallback path is preserved verbatim.
-            if (input.capabilityRequired === "native_mcp") {
+            if (readCapabilityRequired(input) === NATIVE_MCP_CAPABILITY) {
               throw new NativeMcpCapabilityRequiredError("anthropic", apiError);
             }
             // Native MCP failed (e.g. beta not enabled on the account). Fall back to
@@ -965,6 +1026,26 @@ export function createAnthropicProviderAdapter(config: AnthropicConnectionConfig
       const streamMcpServerTool = streamMcpServerTools[0];
       const streamNonMcpTools = input.tools?.filter(t => !isMcpServerTool(t));
 
+      // cinatra#2776 item 3(a) — the STREAM-side native_mcp fail-closed guard.
+      //
+      // Before #2776 `stream()` had NO capabilityRequired check whatsoever: a
+      // `function-tools`-configured connector went straight to
+      // `fetchMcpToolsAsLlmFunctionTools` below and flattened the self-MCP
+      // catalog into inline `input_schema` tools — on the very path browser
+      // chat and the widget use. The guard MUST stay here: before the
+      // credential-bearing `tools/list` fetch, and before the container-skills
+      // refusal, so the ruled `native_mcp_capability_required` is the error
+      // class on every surface (item 3(b)).
+      //
+      // `capabilityRequired` is read defensively — the host ABI adds it to
+      // `StreamInput` in the host phase of #2776, and this connector must work
+      // against an old host too.
+      assertNativeMcpCapabilitySatisfiable({
+        capabilityRequired: readCapabilityRequired(input),
+        mcpMode,
+        mcpServerToolCount: streamMcpServerTools.length,
+      });
+
       // Fail closed: container skills require the native beta path.
       if (streamHasContainerSkills && mcpMode === "function-tools") {
         throw new AnthropicFunctionToolSkillError(
@@ -974,6 +1055,10 @@ export function createAnthropicProviderAdapter(config: AnthropicConnectionConfig
       }
 
       let streamEffectiveTools = streamNonMcpTools ?? [];
+      // The flattening bridge. Reachable ONLY in explicitly configured
+      // function-tools mode AND only when the request did not pin native_mcp
+      // (the guard above already refused that combination) — cinatra#2776
+      // item 3(d): there is no path from a native_mcp stream to function tools.
       if (streamMcpServerTool && mcpMode === "function-tools") {
         const mcpFunctionTools = await fetchMcpToolsAsLlmFunctionTools(streamMcpServerTool);
         streamEffectiveTools = [...mcpFunctionTools, ...streamEffectiveTools];
@@ -985,17 +1070,21 @@ export function createAnthropicProviderAdapter(config: AnthropicConnectionConfig
         streamEffectiveTools = streamEffectiveTools.filter(t => !isShellTool(t));
       }
 
-      // When container skills are present, the stream MUST go through the
-      // beta path with mcp_servers + container + the stacked skills betas
-      // (mirrors generate's native path; chat/widget are stream-based).
+      // cinatra#2776 item 3(c) — native-MCP streams go through the beta stream
+      // WHENEVER native mode has MCP servers, with or without container skills.
       //
-      // Scoped to container-skills ONLY. Anthropic streams without container
-      // skills use the GA `client.messages.stream` path, so routing
-      // no-container native-MCP streams through beta-stream would be scope
-      // creep that (a) changes the GA path for every existing stream and
-      // (b) drops server-side mcp_tool_use turns. The ONLY beta-stream case
-      // introduced here is a container.skills request.
-      const streamUseNativeBeta = streamHasContainerSkills && mcpMode === "native";
+      // The previous scoping (container-skills only) meant a native-mode stream
+      // carrying self-MCP but no container skills took the GA
+      // `client.messages.stream` path, which has no `mcp_servers` param at all:
+      // the self-MCP catalog was silently DROPPED from the request rather than
+      // sent as the one hosted MCP reference. Neither shape is acceptable —
+      // the catalog must reach the model as `mcp_servers[]` + `mcp_toolset`,
+      // never as flattened inline function tools and never not at all. The
+      // beta-stream continuation handling below (pause_turn / server-side
+      // mcp_tool_use turns) therefore now covers every native-MCP stream.
+      const streamUseNativeBeta =
+        mcpMode === "native" &&
+        (streamHasContainerSkills || streamMcpServerTools.length > 0);
       const streamMcpToolsetEntries = streamMcpServerTools.map((t) => ({
         type: "mcp_toolset" as const,
         mcp_server_name: t.serverLabel,
