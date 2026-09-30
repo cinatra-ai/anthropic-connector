@@ -12,7 +12,6 @@ import {
   isAnthropicLoggingEnabled,
   getAnthropicLoggingSettings,
 } from "../telemetry";
-import { ANTHROPIC_API_LOG_DIRECTORY } from "../log-directory";
 import { registerAnthropicConnector, _resetAnthropicDepsForTests } from "../deps";
 
 /** Bind a deps slot whose connector-config read returns `value` for the
@@ -70,10 +69,14 @@ describe("Anthropic logging authority (cinatra#1715 D2) — stateless persisted 
     expect(read.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("getAnthropicLoggingSettings() reports the enabled flag + the anthropic log directory", () => {
-    bindLoggingConfig({ enabled: false });
+  it("getAnthropicLoggingSettings() reports the enabled flag + the directory the host resolves for the log channel", () => {
+    const captureLogDirectory = vi.fn((channel: string) => `host-root/logs/${channel}`);
+    registerAnthropicConnector({
+      readConnectorConfigFromDatabase: <T>(_key: string, _fallback: T): T => ({ enabled: false }) as T,
+      captureLogDirectory,
+    } as never);
     const settings = getAnthropicLoggingSettings();
     expect(settings.enabled).toBe(false);
-    expect(settings.directory).toBe(ANTHROPIC_API_LOG_DIRECTORY);
+    expect(settings.directory).toBe(captureLogDirectory("anthropic-api"));
   });
 });
