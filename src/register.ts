@@ -50,7 +50,7 @@ import {
 import { getAnthropicLoggingSettings, writeAnthropicLogFile } from "./telemetry";
 // cinatra.llmProvider ABI v2 native-skills probe (cinatra-ai/cinatra#2093).
 import { probeNativeSkills } from "./native-skills-probe";
-import { ANTHROPIC_API_LOG_DIRECTORY } from "./log-directory";
+import { ANTHROPIC_LOG_CAPTURE_CHANNEL } from "./log-capture-channel";
 
 import {
   registerAnthropicConnector,
@@ -204,6 +204,12 @@ function buildHostBoundDeps(ctx: ExtensionHostContext): AnthropicConnectorDeps {
     get anthropicSkillConfig() {
       return tryAnthropicSkillConfig(ctx);
     },
+    // Request/response logs are stored by the host's capture port; the host
+    // owns the directory, the file naming and the rotation.
+    captureLog: async (channel, entry) => {
+      await ctx.logger?.capture?.(channel, entry);
+    },
+    captureLogDirectory: (channel) => ctx.logger?.captureDirectory?.(channel) ?? "",
   };
 }
 
@@ -255,7 +261,7 @@ export function register(ctx: ExtensionHostContext): void {
       // → the same key), so NO `saveLoggingSettings` is exposed — this connector
       // only READS the flag.
       getLoggingSettings: () => getAnthropicLoggingSettings(),
-      logDirectory: ANTHROPIC_API_LOG_DIRECTORY,
+      logDirectory: ctx.logger?.captureDirectory?.(ANTHROPIC_LOG_CAPTURE_CHANNEL) ?? "",
       writeLogFile: (input: { label: string; kind: "request" | "response"; body: unknown }) =>
         writeAnthropicLogFile({ label: input.label, kind: input.kind, body: input.body }),
     },

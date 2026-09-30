@@ -139,6 +139,14 @@ export interface AnthropicConnectorDeps {
    * deps fixtures (tests, older host binders) compile unchanged.
    */
   anthropicSkillConfig?: HostAnthropicSkillConfigShape | null;
+  /**
+   * The host's capture port (`ctx.logger.capture`): stores one request/response
+   * log entry under the host-owned log directory and rotates it. Optional so
+   * pre-existing deps fixtures and older host binders compile unchanged.
+   */
+  captureLog?: (channel: string, entry: { label: string; kind: string; body: unknown }) => Promise<void>;
+  /** The directory the host resolves for a capture channel (display value only). */
+  captureLogDirectory?: (channel: string) => string;
 }
 
 const ANTHROPIC_DEPS_KEY = Symbol.for("@cinatra-ai/anthropic-connector:host-deps/v1");
